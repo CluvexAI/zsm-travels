@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, ChevronLeft, Check, CreditCard, User, Plane, DollarSign, Search, Calendar, ShieldAlert, ArrowRightLeft, Briefcase, PlaneTakeoff, PlaneLanding, Clock, Award, Loader2, X, Plus, Minus, Download } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronRight, ChevronLeft, Check, CreditCard, User, Plane, DollarSign, Search, Calendar, ShieldAlert, ArrowRightLeft, Briefcase, PlaneTakeoff, PlaneLanding, Clock, Award, Loader2, X, Plus, Minus, Download, ExternalLink } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 
 const steps = [
@@ -23,9 +24,22 @@ const mockFlights = [
 ];
 
 const NewBooking = () => {
-  const [currentStep, setCurrentStep] = useState(1);
+  const navigate = useNavigate();
+  const [currentStep, setCurrentStep] = useState(() => {
+    try {
+      const saved = localStorage.getItem('newBookingDraft');
+      if (saved) return JSON.parse(saved).currentStep || 1;
+    } catch(e) {}
+    return 1;
+  });
   const [returnStep, setReturnStep] = useState(null);
-  const [tripType, setTripType] = useState('Round Trip');
+  const [tripType, setTripType] = useState(() => {
+    try {
+      const saved = localStorage.getItem('newBookingDraft');
+      if (saved) return JSON.parse(saved).tripType || 'Round Trip';
+    } catch(e) {}
+    return 'Round Trip';
+  });
   
   const [outboundSearchQuery, setOutboundSearchQuery] = useState('');
   const [outboundActiveSearch, setOutboundActiveSearch] = useState('');
@@ -37,28 +51,42 @@ const NewBooking = () => {
   const [isInboundSearching, setIsInboundSearching] = useState(false);
   const [inboundSearchComplete, setInboundSearchComplete] = useState(true);
   
-  const [formData, setFormData] = useState({
-    passengersCount: 1,
-    outboundFlight: null,
-    inboundFlight: null,
-    fromAirport: 'JFK',
-    toAirport: 'LAX',
-    passengers: [{ title: 'Mr', firstName: '', middleName: '', lastName: '', dob: '', gender: 'Male', phoneCode: '+1', phone: '', altPhoneCode: '+1', altPhone: '', email: '', eTicket: '', carryOn: '1 Bag (Included)', checkInBag: 'None', insurance: 'None' }],
-    paymentMethod: 'Customer Card',
-    cardNumber: '',
-    expiryDate: '',
-    cvv: '',
-    paymentAgreed: false,
-    customTaxes: null,
-    customServiceFee: null,
-    customActualCost: null,
-    customActualMCO: null,
-    merchantName: '',
-    vendorCode: ''
+  const [formData, setFormData] = useState(() => {
+    try {
+      const saved = localStorage.getItem('newBookingDraft');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.formData) return parsed.formData;
+      }
+    } catch(e) {}
+    return {
+      passengersCount: 1,
+      outboundFlight: null,
+      inboundFlight: null,
+      fromAirport: 'JFK',
+      toAirport: 'LAX',
+      passengers: [{ title: 'Mr', firstName: '', middleName: '', lastName: '', dob: '', gender: 'Male', phoneCode: '+1', phone: '', altPhoneCode: '+1', altPhone: '', email: '', eTicket: '', carryOn: '1 Bag (Included)', checkInBag: 'None', insurance: 'None' }],
+      paymentMethod: 'Customer Card',
+      cardNumber: '',
+      expiryDate: '',
+      cvv: '',
+      paymentAgreed: false,
+      customTaxes: null,
+      customServiceFee: null,
+      customActualCost: null,
+      customActualMCO: null,
+      merchantName: '',
+      vendorCode: ''
+    };
   });
 
   const [cardErrors, setCardErrors] = useState({ cardNumber: '', expiryDate: '', cvv: '' });
   const [cardTouched, setCardTouched] = useState({ cardNumber: false, expiryDate: false, cvv: false });
+
+  // Auto-save to localStorage
+  useEffect(() => {
+    localStorage.setItem('newBookingDraft', JSON.stringify({ currentStep, tripType, formData }));
+  }, [currentStep, tripType, formData]);
 
   // -- Credit Card Helpers --
   const luhnCheck = (num) => {
@@ -918,9 +946,12 @@ const NewBooking = () => {
                 </div>
               </div>
               
-              <div id="pdf-download-btn" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'center' }}>
-                <button onClick={handleDownloadPdf} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--primary-accent)', color: 'white', border: 'none', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+              <div id="pdf-download-btn" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+                <button onClick={handleDownloadPdf} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'white', color: 'var(--primary-accent)', border: '1px solid var(--primary-accent)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
                   <Download size={18} /> Download PDF Receipt
+                </button>
+                <button onClick={() => navigate('/booking/B-23490')} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--primary-accent)', color: 'white', border: 'none', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                  <ExternalLink size={18} /> View Booking & Signature Status
                 </button>
               </div>
             </div>
@@ -955,9 +986,11 @@ const NewBooking = () => {
           <p style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Complete the steps below to secure the booking.</p>
         </div>
         
-        <div style={{ background: 'white', padding: '0.5rem 1.25rem', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '1rem', boxShadow: 'var(--shadow-sm)' }}>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-             <User size={16} /> Passengers
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          
+          <div style={{ background: 'white', padding: '0.5rem 1.25rem', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '1rem', boxShadow: 'var(--shadow-sm)' }}>
+            <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+               <User size={16} /> Passengers
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderLeft: '1px solid var(--border-color)', paddingLeft: '1rem' }}>
             <button 
@@ -975,6 +1008,7 @@ const NewBooking = () => {
             >
               <Plus size={14} strokeWidth={3} />
             </button>
+          </div>
           </div>
         </div>
       </div>

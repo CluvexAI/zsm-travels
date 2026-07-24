@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Save, Search, Filter, Eye, Edit3, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { Save, Search, Filter, Eye, Edit3, ChevronLeft, ChevronRight, Download, CheckCircle, X } from 'lucide-react';
 
 const bookingStatusOptions = ['All', 'On Hold', 'Confirmed', 'Cancelled', 'Refunded', 'Pending', 'Voided'];
 const paymentStatusOptions = ['All', 'Pending', 'Authorized', 'Captured', 'Declined', 'Refunded', 'Chargeback'];
@@ -45,6 +45,7 @@ const RetentionReports = () => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const handleChange = (field, value) => {
     setLifecycle(prev => ({ ...prev, [field]: value }));
@@ -335,7 +336,7 @@ const RetentionReports = () => {
           {/* Save Button */}
           <div>
             <button
-              onClick={() => alert('Lifecycle changes saved successfully!')}
+              onClick={() => setShowSuccessModal(true)}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -620,6 +621,40 @@ const RetentionReports = () => {
           </div>
         )}
       </div>
+
+      {/* Success Modal */}
+      {showSuccessModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+          backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, 
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>
+          <div style={{
+            background: 'white', padding: '2rem', borderRadius: '8px', 
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            maxWidth: '400px', width: '90%', textAlign: 'center', position: 'relative',
+            animation: 'fadeIn 0.2s ease-out forwards'
+          }}>
+            <button 
+              onClick={() => setShowSuccessModal(false)}
+              style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}
+            >
+              <X size={20} />
+            </button>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+              <CheckCircle size={48} color="#10b981" />
+            </div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#1f2937', marginBottom: '0.5rem' }}>Success!</h3>
+            <p style={{ color: '#4b5563', marginBottom: '1.5rem' }}>Lifecycle changes saved successfully!</p>
+            <button 
+              onClick={() => setShowSuccessModal(false)}
+              style={{ padding: '0.5rem 2rem', background: '#38b2ac', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

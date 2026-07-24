@@ -13,6 +13,17 @@ const mockReservations = [
   { id: 'ZSM-10048', pnr: 'VNLR6D', firstName: 'Linda', middleName: 'S.', lastName: 'Martinez', email: 'linda.martinez@email.com', phone: '+1 206-555-0156', altPhone: '', dob: '1993-04-18', gender: 'Female', address: '444 Pine St', city: 'Seattle', state: 'WA', zip: '98101', country: 'United States', route: 'SEA → SFO', origin: 'SEA', destination: 'SFO', airline: 'Alaska Airlines', flightNumber: 'AS 101', travelDate: '2026-08-25', returnDate: '2026-09-02', bookingDate: '2026-07-22', status: 'Pending' },
 ];
 
+const getStrictPST = () => {
+  const d = new Date();
+  const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+  const pst = new Date(utc - (3600000 * 8));
+  return pst.toLocaleString('en-US', {
+    month: 'numeric', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', second: '2-digit',
+    hour12: true
+  }) + ' PST';
+};
+
 const ChangeItinerary = () => {
   const [searchFilters, setSearchFilters] = useState({
     cxId: '',
@@ -34,6 +45,8 @@ const ChangeItinerary = () => {
   const [selectedReservation, setSelectedReservation] = useState(null);
   const [editData, setEditData] = useState(null);
   const [saved, setSaved] = useState(false);
+  const [alertMessage, setAlertMessage] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null);
   
   // Search states for edit itinerary
   const [outboundSearched, setOutboundSearched] = useState(false);
@@ -95,7 +108,7 @@ const ChangeItinerary = () => {
       tripType: reservation.returnDate ? 'Round Trip' : 'One Way',
       newOutboundFlight: '',
       newInboundFlight: '',
-      editDateTime: new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', dateStyle: 'short', timeStyle: 'short' }),
+      editDateTime: getStrictPST(),
       paymentOption: 'Customer Card',
       billingAmount: 125.00
     });
@@ -124,19 +137,23 @@ const ChangeItinerary = () => {
 
   const handleSave = () => {
     if (!editData.note || editData.note.trim() === '') {
-      alert('Please provide a note for this itinerary change (required).');
+      setAlertMessage('Please provide a note for this itinerary change (required).');
       return;
     }
 
-    setSaved(true);
-    // Update the search results with edited data
-    setSearchResults(prev => prev.map(r => r.id === editData.id ? { ...editData } : r));
-    // Close edit form and return to search after brief success message
-    setTimeout(() => {
-      setSelectedReservation(null);
-      setEditData(null);
-      setSaved(false);
-    }, 1500);
+    setConfirmAction({
+      message: "Are you sure you want to save these itinerary changes?",
+      onConfirm: () => {
+        setSaved(true);
+        setConfirmAction(null);
+        setSearchResults(prev => prev.map(r => r.id === editData.id ? { ...editData } : r));
+        setTimeout(() => {
+          setSelectedReservation(null);
+          setEditData(null);
+          setSaved(false);
+        }, 1500);
+      }
+    });
   };
 
   const getBadgeStyle = (status) => {
@@ -508,11 +525,7 @@ const ChangeItinerary = () => {
                   <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#4b5563', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     Billing & Timing Details
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
-                    <div>
-                      <label style={labelStyle}>Date & Time of Edit (PST)</label>
-                      <input type="text" value={editData.editDateTime || ''} disabled style={{ ...inputStyle, backgroundColor: '#f3f4f6', color: '#6b7280' }} />
-                    </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                     <div>
                       <label style={labelStyle}>Payment Option</label>
                       <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
@@ -556,6 +569,15 @@ const ChangeItinerary = () => {
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 700, color: '#374151', marginBottom: '0.5rem' }}>
                     Note <span style={{ color: '#ef4444' }}>*</span>
                   </label>
+                  <div style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.875rem', color: '#6b7280' }}>Date & Time:</span>
+                    <input 
+                      type="text" 
+                      value={editData.editDateTime || ''} 
+                      readOnly 
+                      style={{ flex: 1, padding: '0.5rem 0.75rem', border: '1px solid #cbd5e1', borderRadius: '4px', backgroundColor: '#f1f5f9', color: '#64748b', fontSize: '0.875rem', outline: 'none', cursor: 'not-allowed' }}
+                    />
+                  </div>
                   <textarea 
                     value={editData.note || ''} 
                     onChange={(e) => handleFieldChange('note', e.target.value)}
@@ -638,6 +660,48 @@ const ChangeItinerary = () => {
                    </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Alert Modal */}
+      {alertMessage && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: 'white', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '400px', boxShadow: 'var(--shadow-xl)', animation: 'slideUp 0.3s ease-out', textAlign: 'center' }}>
+            <AlertCircle size={48} color="#ef4444" style={{ margin: '0 auto 1rem' }} />
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>Notice</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '1rem' }}>{alertMessage}</p>
+            <button 
+              onClick={() => setAlertMessage(null)}
+              style={{ width: '100%', padding: '0.875rem', background: '#ef4444', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', fontWeight: 700, cursor: 'pointer', boxShadow: 'var(--shadow-md)' }}
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Modal */}
+      {confirmAction && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: 'white', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: '400px', boxShadow: 'var(--shadow-xl)', animation: 'slideUp 0.3s ease-out', textAlign: 'center' }}>
+            <AlertCircle size={48} color="#f59e0b" style={{ margin: '0 auto 1rem' }} />
+            <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>Confirm Action</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '1rem' }}>{confirmAction.message}</p>
+            <div style={{ display: 'flex', gap: '1rem' }}>
+              <button 
+                onClick={() => setConfirmAction(null)}
+                style={{ flex: 1, padding: '0.875rem', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmAction.onConfirm}
+                style={{ flex: 1, padding: '0.875rem', background: '#f59e0b', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', fontWeight: 700, cursor: 'pointer', boxShadow: 'var(--shadow-md)' }}
+              >
+                Confirm
+              </button>
             </div>
           </div>
         </div>

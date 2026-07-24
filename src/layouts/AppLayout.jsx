@@ -18,13 +18,11 @@ const megaMenuCols = [
     'Seat Assign',
     'Add Baggage',
     'Add Insurance',
-    'Seat and Baggage',
     'Pet Booking',
     'Seat Upgrade'
   ],
   [
-    'UMNR Booking',
-    'Name Correction'
+    'UMNR Booking'
   ]
 ];
 
@@ -71,7 +69,7 @@ const AppLayout = () => {
                     {col.map((item, itemIdx) => (
                       <Link 
                         key={itemIdx} 
-                        to={item === 'New Flight Booking' ? '/new-booking' : item === 'Profile Info Change' ? '/profile-info-change' : item === 'Change Itinerary' ? '/change-itinerary' : '/search'} 
+                        to={item === 'New Flight Booking' ? '/new-booking' : item === 'Profile Info Change' ? '/profile-info-change' : item === 'Change Itinerary' ? '/change-itinerary' : item === 'Cancellation for Refund' ? '/cancellation-refund' : item === 'Cancellation for Credit' ? '/cancellation-credit' : item === 'Seat Assign' ? '/seat-assign' : item === 'Add Baggage' ? '/add-baggage' : item === 'Add Insurance' ? '/add-insurance' : item === 'Pet Booking' ? '/pet-booking' : item === 'Seat Upgrade' ? '/seat-upgrade' : item === 'UMNR Booking' ? '/umnr-booking' : '/search'} 
                         className="mega-menu-item"
                       >
                         <div style={{ width: '6px', height: '6px', borderRadius: '50%', border: '1px solid currentColor', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -97,9 +95,8 @@ const AppLayout = () => {
                   'Leads',
                   'Create Lead',
                   'Upcoming Trips (48 hrs.)',
-                  'Upcoming Trips (24 hrs.)',
+                  'Boarding Pass',
                   'All Website Leads',
-                  'My Website Leads',
                   'Yesterday Sales'
                 ].map((item, itemIdx) => (
                   <Link 
@@ -143,6 +140,16 @@ const AppLayout = () => {
       <main className="main-content">
         <Outlet />
       </main>
+
+      {/* Footer */}
+      <footer className="footer" style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)', fontSize: '0.875rem', borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
+        <p>
+          All Copyright {new Date().getFullYear()} Reserved by{' '}
+          <a href="https://zsmeservices.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-color)', textDecoration: 'none' }}>
+            ZSM eServices Pvt Ltd.
+          </a>
+        </p>
+      </footer>
     </div>
   );
 };
