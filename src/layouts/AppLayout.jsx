@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { 
   Home, ChevronDown, BarChart2, CheckSquare, 
-  Mail, MessageCircle, Bell, PlaneTakeoff 
+  Mail, MessageCircle, Bell, PlaneTakeoff, LogOut, Users, Server, Settings
 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 const megaMenuCols = [
   [
@@ -28,6 +29,7 @@ const megaMenuCols = [
 
 const AppLayout = () => {
   const [dateTime, setDateTime] = useState('');
+  const { user, switchUser, logout, MOCK_USERS } = useAuth();
 
   useEffect(() => {
     const updateTime = () => {
@@ -116,10 +118,34 @@ const AppLayout = () => {
             <Link to="/polls" className="nav-item">
               <CheckSquare size={16} /> Polls
             </Link>
+            <Link to="/admin" className="nav-item" style={{ color: '#0ea5e9', fontWeight: 600 }}>
+              <Settings size={16} /> Settings
+            </Link>
           </nav>
         </div>
         
         <div className="topbar-right">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginRight: '1rem', borderRight: '1px solid #e2e8f0', paddingRight: '1rem' }}>
+            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'linear-gradient(135deg, #0ea5e9, #6366f1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: '0.7rem', fontWeight: 700, flexShrink: 0 }}>
+              {user?.fullName?.split(' ').map(n => n[0]).join('').slice(0, 2)}
+            </div>
+            <div style={{ fontSize: '0.72rem', lineHeight: 1.3 }}>
+              <div style={{ fontWeight: 700, color: '#1e293b' }}>{user?.fullName}</div>
+              <div style={{ color: '#94a3b8' }}>{user?.role}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginRight: '1rem', borderRight: '1px solid #e2e8f0', paddingRight: '1rem' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Switch:</span>
+            <select 
+              value={user?.userId || ''} 
+              onChange={(e) => switchUser(e.target.value)}
+              style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
+            >
+              {MOCK_USERS.map(u => (
+                <option key={u.userId} value={u.userId}>{u.role}</option>
+              ))}
+            </select>
+          </div>
           <div className="topbar-icon">
             <Mail size={18} />
           </div>
@@ -133,6 +159,13 @@ const AppLayout = () => {
           <div style={{ fontSize: '0.75rem', textAlign: 'right', lineHeight: '1.2', color: 'var(--text-muted)' }}>
             {dateTime.split('\n').map((line, i) => <div key={i}>{line}</div>)}
           </div>
+          <button 
+            onClick={logout}
+            title="Sign Out"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.35rem 0.65rem', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '6px', color: '#dc2626', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
+          >
+            <LogOut size={13} /> Logout
+          </button>
         </div>
       </header>
 

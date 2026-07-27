@@ -4,15 +4,23 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer
 } from 'recharts';
 import { Bell } from 'lucide-react';
+import { usePermissions } from '../hooks/usePermissions';
 
-const kpiData = [
-  { title: 'Total MCO', value: '$457,268.95' },
-  { title: 'Total Charged', value: '$345,097.49' },
-  { title: 'Total Chargeback', value: '$2,575.94' },
-  { title: 'Total Cancelled', value: '0' },
-  { title: 'Total Refund', value: '0' },
-  { title: 'Total Partial Refund', value: '$4,003.99' },
-];
+const getKpiData = (canViewActualCost) => {
+  const data = [
+    { title: 'Total MCO', value: '$457,268.95' },
+    { title: 'Total Charged', value: '$345,097.49' },
+    { title: 'Total Chargeback', value: '$2,575.94' },
+    { title: 'Total Cancelled', value: '0' },
+    { title: 'Total Refund', value: '0' },
+    { title: 'Total Partial Refund', value: '$4,003.99' },
+  ];
+
+  if (canViewActualCost) {
+    data.push({ title: 'Actual Airline Cost', value: '$210,400.00' });
+  }
+  return data;
+};
 
 const chartData = [
   { month: 'Jan', value: 120000 },
@@ -28,11 +36,15 @@ const chartData = [
 
 const Dashboard = () => {
   const navigate = useNavigate();
+  const { hasPermission } = usePermissions();
   const [filters, setFilters] = useState({
     cxId: '', bookingId: '', pnr: '', customerName: '', cxPhone: '', customerEmail: '',
     agent: '', altPhone: '', passengerName: '', fromDate: '', toDate: '', status: ''
   });
   const [recentLeads, setRecentLeads] = useState([]);
+
+  const canViewActualCost = hasPermission('Actual Cost', 'View');
+  const kpiData = getKpiData(canViewActualCost);
 
   React.useEffect(() => {
     const savedLeads = JSON.parse(localStorage.getItem('zsm_leads') || '[]');

@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Save, Search, Filter, Eye, Edit3, ChevronLeft, ChevronRight, Download, CheckCircle, X } from 'lucide-react';
+import { Save, Search, Filter, Eye, Edit3, ChevronLeft, ChevronRight, Download, CheckCircle, X, CreditCard } from 'lucide-react';
+import { filterDataByScope } from '../services/mockAuthService';
+import { useAuth } from '../contexts/AuthContext';
 
 const bookingStatusOptions = ['All', 'On Hold', 'Confirmed', 'Cancelled', 'Refunded', 'Pending', 'Voided'];
 const paymentStatusOptions = ['All', 'Pending', 'Authorized', 'Captured', 'Declined', 'Refunded', 'Chargeback'];
@@ -9,24 +11,25 @@ const callStatusOptions = ['All', 'Pending', 'Connected', 'No Answer', 'Voicemai
 const crmAuditOptions = ['All', 'Pending', 'Passed', 'Failed', 'In Review', 'Waived'];
 const qualityAuditOptions = ['All', 'Passed', 'Failed', 'Pending', 'In Review', 'Waived'];
 const cbStatusOptions = ['All', 'Completed', 'Pending', 'In Progress', 'Cancelled', 'Expired'];
+const actionOptions = ['All', 'Send Reminder', 'Cancel Booking', 'Request Refund', 'Escalate Issue', 'Process Payment'];
 
 // Mock reservations data
 const mockReservations = [
-  { id: 'ZSM-10041', pnr: 'XKRT4P', passenger: 'John M. Smith', route: 'JFK → LAX', airline: 'American Airlines', travelDate: '2026-08-15', bookingDate: '2026-07-18', amount: 489.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.' },
-  { id: 'ZSM-10042', pnr: 'BMNW2L', passenger: 'Emily R. Johnson', route: 'ORD → MIA', airline: 'Delta Air Lines', travelDate: '2026-08-20', bookingDate: '2026-07-19', amount: 345.50, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.' },
-  { id: 'ZSM-10043', pnr: 'FDGT7Q', passenger: 'Robert A. Williams', route: 'SFO → SEA', airline: 'United Airlines', travelDate: '2026-08-10', bookingDate: '2026-07-17', amount: 215.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'In Progress', smsStatus: 'Sent', callStatus: 'No Answer', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.' },
-  { id: 'ZSM-10044', pnr: 'PLRV9S', passenger: 'Maria T. Garcia', route: 'LAX → JFK', airline: 'JetBlue Airways', travelDate: '2026-09-01', bookingDate: '2026-07-20', amount: 529.00, bookingStatus: 'Confirmed', paymentStatus: 'Authorized', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'In Review', qualityAuditStatus: 'Passed', cbStatus: 'In Progress', agent: 'David L.' },
-  { id: 'ZSM-10045', pnr: 'HCNK3W', passenger: 'James L. Brown', route: 'DFW → ATL', airline: 'American Airlines', travelDate: '2026-08-05', bookingDate: '2026-07-15', amount: 178.00, bookingStatus: 'Cancelled', paymentStatus: 'Refunded', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.' },
-  { id: 'ZSM-10046', pnr: 'YWMZ5A', passenger: 'Patricia D. Davis', route: 'BOS → DCA', airline: 'Delta Air Lines', travelDate: '2026-08-22', bookingDate: '2026-07-21', amount: 298.50, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Voicemail', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.' },
-  { id: 'ZSM-10047', pnr: 'TQJS8E', passenger: 'Michael K. Wilson', route: 'MIA → ORD', airline: 'United Airlines', travelDate: '2026-08-18', bookingDate: '2026-07-16', amount: 412.00, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Completed', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'David L.' },
-  { id: 'ZSM-10048', pnr: 'VNLR6D', passenger: 'Linda S. Martinez', route: 'SEA → SFO', airline: 'Alaska Airlines', travelDate: '2026-08-25', bookingDate: '2026-07-22', amount: 189.00, bookingStatus: 'Pending', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.' },
-  { id: 'ZSM-10049', pnr: 'CKWP1F', passenger: 'David W. Anderson', route: 'ATL → LAX', airline: 'Delta Air Lines', travelDate: '2026-08-12', bookingDate: '2026-07-14', amount: 567.00, bookingStatus: 'On Hold', paymentStatus: 'Authorized', workStatus: 'Escalated', smsStatus: 'Failed', callStatus: 'Busy', crmAuditStatus: 'Failed', qualityAuditStatus: 'Failed', cbStatus: 'Cancelled', agent: 'Mike T.' },
-  { id: 'ZSM-10050', pnr: 'RGXN4H', passenger: 'Susan P. Thomas', route: 'JFK → LHR', airline: 'British Airways', travelDate: '2026-09-10', bookingDate: '2026-07-20', amount: 1245.00, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'David L.' },
-  { id: 'ZSM-10051', pnr: 'MPHT2J', passenger: 'Charles B. Jackson', route: 'LAX → HNL', airline: 'Hawaiian Airlines', travelDate: '2026-08-28', bookingDate: '2026-07-19', amount: 389.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Sent', callStatus: 'No Answer', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.' },
-  { id: 'ZSM-10052', pnr: 'LBSW7K', passenger: 'Karen E. White', route: 'ORD → DEN', airline: 'United Airlines', travelDate: '2026-08-08', bookingDate: '2026-07-18', amount: 245.50, bookingStatus: 'Cancelled', paymentStatus: 'Refunded', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.' },
-  { id: 'ZSM-10053', pnr: 'QDYT9M', passenger: 'Daniel R. Harris', route: 'DCA → BOS', airline: 'JetBlue Airways', travelDate: '2026-08-30', bookingDate: '2026-07-21', amount: 312.00, bookingStatus: 'Pending', paymentStatus: 'Pending', workStatus: 'In Progress', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'In Review', qualityAuditStatus: 'In Review', cbStatus: 'In Progress', agent: 'David L.' },
-  { id: 'ZSM-10054', pnr: 'FXZN3P', passenger: 'Nancy C. Clark', route: 'MIA → JFK', airline: 'American Airlines', travelDate: '2026-09-05', bookingDate: '2026-07-22', amount: 435.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.' },
-  { id: 'ZSM-10055', pnr: 'WKRM6R', passenger: 'Steven J. Lewis', route: 'SFO → JFK', airline: 'Delta Air Lines', travelDate: '2026-08-16', bookingDate: '2026-07-15', amount: 678.50, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Completed', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.' },
+  { id: 'ZSM-10041', pnr: 'XKRT4P', passenger: 'John M. Smith', route: 'JFK → LAX', airline: 'American Airlines', travelDate: '2026-08-15', bookingDate: '2026-07-18', amount: 489.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.', action: 'Send Reminder' },
+  { id: 'ZSM-10042', pnr: 'BMNW2L', passenger: 'Emily R. Johnson', route: 'ORD → MIA', airline: 'Delta Air Lines', travelDate: '2026-08-20', bookingDate: '2026-07-19', amount: 345.50, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.', action: 'Process Payment' },
+  { id: 'ZSM-10043', pnr: 'FDGT7Q', passenger: 'Robert A. Williams', route: 'SFO → SEA', airline: 'United Airlines', travelDate: '2026-08-10', bookingDate: '2026-07-17', amount: 215.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'In Progress', smsStatus: 'Sent', callStatus: 'No Answer', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.', action: 'Request Refund' },
+  { id: 'ZSM-10044', pnr: 'PLRV9S', passenger: 'Maria T. Garcia', route: 'LAX → JFK', airline: 'JetBlue Airways', travelDate: '2026-09-01', bookingDate: '2026-07-20', amount: 529.00, bookingStatus: 'Confirmed', paymentStatus: 'Authorized', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'In Review', qualityAuditStatus: 'Passed', cbStatus: 'In Progress', agent: 'David L.', action: 'Escalate Issue' },
+  { id: 'ZSM-10045', pnr: 'HCNK3W', passenger: 'James L. Brown', route: 'DFW → ATL', airline: 'American Airlines', travelDate: '2026-08-05', bookingDate: '2026-07-15', amount: 178.00, bookingStatus: 'Cancelled', paymentStatus: 'Refunded', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.', action: 'Cancel Booking' },
+  { id: 'ZSM-10046', pnr: 'YWMZ5A', passenger: 'Patricia D. Davis', route: 'BOS → DCA', airline: 'Delta Air Lines', travelDate: '2026-08-22', bookingDate: '2026-07-21', amount: 298.50, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Voicemail', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.', action: 'Send Reminder' },
+  { id: 'ZSM-10047', pnr: 'TQJS8E', passenger: 'Michael K. Wilson', route: 'MIA → ORD', airline: 'United Airlines', travelDate: '2026-08-18', bookingDate: '2026-07-16', amount: 412.00, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Completed', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'David L.', action: 'Process Payment' },
+  { id: 'ZSM-10048', pnr: 'VNLR6D', passenger: 'Linda S. Martinez', route: 'SEA → SFO', airline: 'Alaska Airlines', travelDate: '2026-08-25', bookingDate: '2026-07-22', amount: 189.00, bookingStatus: 'Pending', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.', action: 'Send Reminder' },
+  { id: 'ZSM-10049', pnr: 'CKWP1F', passenger: 'David W. Anderson', route: 'ATL → LAX', airline: 'Delta Air Lines', travelDate: '2026-08-12', bookingDate: '2026-07-14', amount: 567.00, bookingStatus: 'On Hold', paymentStatus: 'Authorized', workStatus: 'Escalated', smsStatus: 'Failed', callStatus: 'Busy', crmAuditStatus: 'Failed', qualityAuditStatus: 'Failed', cbStatus: 'Cancelled', agent: 'Mike T.', action: 'Escalate Issue' },
+  { id: 'ZSM-10050', pnr: 'RGXN4H', passenger: 'Susan P. Thomas', route: 'JFK → LHR', airline: 'British Airways', travelDate: '2026-09-10', bookingDate: '2026-07-20', amount: 1245.00, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'David L.', action: 'Request Refund' },
+  { id: 'ZSM-10051', pnr: 'MPHT2J', passenger: 'Charles B. Jackson', route: 'LAX → HNL', airline: 'Hawaiian Airlines', travelDate: '2026-08-28', bookingDate: '2026-07-19', amount: 389.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Sent', callStatus: 'No Answer', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.', action: 'Cancel Booking' },
+  { id: 'ZSM-10052', pnr: 'LBSW7K', passenger: 'Karen E. White', route: 'ORD → DEN', airline: 'United Airlines', travelDate: '2026-08-08', bookingDate: '2026-07-18', amount: 245.50, bookingStatus: 'Cancelled', paymentStatus: 'Refunded', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.', action: 'Request Refund' },
+  { id: 'ZSM-10053', pnr: 'QDYT9M', passenger: 'Daniel R. Harris', route: 'DCA → BOS', airline: 'JetBlue Airways', travelDate: '2026-08-30', bookingDate: '2026-07-21', amount: 312.00, bookingStatus: 'Pending', paymentStatus: 'Pending', workStatus: 'In Progress', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'In Review', qualityAuditStatus: 'In Review', cbStatus: 'In Progress', agent: 'David L.', action: 'Send Reminder' },
+  { id: 'ZSM-10054', pnr: 'FXZN3P', passenger: 'Nancy C. Clark', route: 'MIA → JFK', airline: 'American Airlines', travelDate: '2026-09-05', bookingDate: '2026-07-22', amount: 435.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.', action: 'Process Payment' },
+  { id: 'ZSM-10055', pnr: 'WKRM6R', passenger: 'Steven J. Lewis', route: 'SFO → JFK', airline: 'Delta Air Lines', travelDate: '2026-08-16', bookingDate: '2026-07-15', amount: 678.50, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Completed', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.', action: 'Cancel Booking' },
 ];
 
 const ROWS_PER_PAGE = 8;
@@ -41,11 +44,21 @@ const RetentionReports = () => {
     crmAuditStatus: 'All',
     qualityAuditStatus: 'All',
     cbStatus: 'All',
+    action: 'All',
   });
+
+  const { user } = useAuth();
+  
+  // Simulate backend data fetching with scope limits applied BEFORE any frontend filtering
+  const scopedReservations = useMemo(() => {
+    return filterDataByScope(mockReservations, user, 'Bookings', 'View');
+  }, [user]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [activeModal, setActiveModal] = useState(null); // 'view', 'edit', null
+  const [selectedReservation, setSelectedReservation] = useState(null);
 
   const handleChange = (field, value) => {
     setLifecycle(prev => ({ ...prev, [field]: value }));
@@ -54,7 +67,7 @@ const RetentionReports = () => {
 
   // Filter reservations based on lifecycle filters and search
   const filteredReservations = useMemo(() => {
-    return mockReservations.filter(r => {
+    return scopedReservations.filter(r => {
       if (lifecycle.bookingStatus !== 'All' && r.bookingStatus !== lifecycle.bookingStatus) return false;
       if (lifecycle.paymentStatus !== 'All' && r.paymentStatus !== lifecycle.paymentStatus) return false;
       if (lifecycle.workStatus !== 'All' && r.workStatus !== lifecycle.workStatus) return false;
@@ -63,6 +76,7 @@ const RetentionReports = () => {
       if (lifecycle.crmAuditStatus !== 'All' && r.crmAuditStatus !== lifecycle.crmAuditStatus) return false;
       if (lifecycle.qualityAuditStatus !== 'All' && r.qualityAuditStatus !== lifecycle.qualityAuditStatus) return false;
       if (lifecycle.cbStatus !== 'All' && r.cbStatus !== lifecycle.cbStatus) return false;
+      if (lifecycle.action !== 'All' && r.action !== lifecycle.action) return false;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -77,7 +91,7 @@ const RetentionReports = () => {
       }
       return true;
     });
-  }, [lifecycle, searchQuery]);
+  }, [lifecycle, searchQuery, scopedReservations]);
 
   const totalPages = Math.max(1, Math.ceil(filteredReservations.length / ROWS_PER_PAGE));
   const paginatedData = filteredReservations.slice((currentPage - 1) * ROWS_PER_PAGE, currentPage * ROWS_PER_PAGE);
@@ -331,6 +345,21 @@ const RetentionReports = () => {
                 VND-STD
               </div>
             </div>
+
+            <div style={fieldGroupStyle}>
+              <label style={labelStyle}>Actions</label>
+              <select
+                value={lifecycle.action}
+                onChange={(e) => handleChange('action', e.target.value)}
+                style={selectStyle}
+              >
+                {actionOptions.map(opt => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Save Button */}
@@ -519,6 +548,7 @@ const RetentionReports = () => {
                       <div style={{ display: 'flex', gap: '0.35rem' }}>
                         <button
                           title="View"
+                          onClick={() => { setSelectedReservation(r); setActiveModal('view'); }}
                           style={{
                             padding: '0.3rem',
                             borderRadius: '4px',
@@ -533,6 +563,7 @@ const RetentionReports = () => {
                         </button>
                         <button
                           title="Edit"
+                          onClick={() => { setSelectedReservation(r); setActiveModal('edit'); }}
                           style={{
                             padding: '0.3rem',
                             borderRadius: '4px',
@@ -544,6 +575,21 @@ const RetentionReports = () => {
                           }}
                         >
                           <Edit3 size={13} color="#6b7280" />
+                        </button>
+                        <button
+                          title="Charge Card"
+                          onClick={() => { setSelectedReservation(r); setActiveModal('charge'); }}
+                          style={{
+                            padding: '0.3rem',
+                            borderRadius: '4px',
+                            border: '1px solid #e5e7eb',
+                            background: 'white',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <CreditCard size={13} color="#6b7280" />
                         </button>
                       </div>
                     </td>
@@ -652,6 +698,244 @@ const RetentionReports = () => {
             >
               Continue
             </button>
+          </div>
+        </div>
+      )}
+      {/* View/Edit Modals */}
+      {activeModal && selectedReservation && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+          backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, 
+          display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>
+          <div style={{
+            background: 'white', padding: '2rem', borderRadius: '8px', 
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            maxWidth: '500px', width: '90%', position: 'relative',
+            animation: 'fadeIn 0.2s ease-out forwards'
+          }}>
+            <button 
+              onClick={() => setActiveModal(null)}
+              style={{ position: 'absolute', top: '1rem', right: '1rem', background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}
+            >
+              <X size={20} />
+            </button>
+            
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#1f2937', margin: '0 0 1.5rem 0', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.75rem' }}>
+              {activeModal === 'edit' ? 'Edit Reservation' : activeModal === 'charge' ? 'Charge Card' : 'View Reservation'}: {selectedReservation.id}
+            </h3>
+            
+            {activeModal === 'charge' ? (
+              <div style={{ marginBottom: '2rem' }}>
+                <p style={{ color: '#4b5563', marginBottom: '1.5rem', lineHeight: '1.5' }}>
+                  You are about to charge the card on file for <strong>{selectedReservation.passenger}</strong> (PNR: {selectedReservation.pnr}).
+                </p>
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={labelStyle}>Charge Amount ($)</label>
+                  <input type="number" step="0.01" style={selectStyle} defaultValue={selectedReservation.amount} />
+                </div>
+                
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={labelStyle}>Reason</label>
+                  <input type="text" style={selectStyle} placeholder="e.g. Balance due, Upgrade fee, Change fee..." />
+                </div>
+                
+                <div style={{ padding: '1rem', backgroundColor: '#f0fdfa', borderRadius: '6px', border: '1px dashed #14b8a6' }}>
+                  <div style={{ fontSize: '0.85rem', color: '#0f766e', display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <span>Card on File:</span>
+                    <strong>Visa ending in 4242</strong>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', color: '#0f766e', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Expiration:</span>
+                    <strong>12/28</strong>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '2rem', maxHeight: '60vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
+                <div>
+                  <label style={labelStyle}>PNR</label>
+                  {activeModal === 'edit' ? (
+                    <input type="text" style={selectStyle} defaultValue={selectedReservation.pnr} />
+                  ) : (
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600, fontFamily: 'monospace' }}>{selectedReservation.pnr}</div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Passenger Name</label>
+                  {activeModal === 'edit' ? (
+                    <input type="text" style={selectStyle} defaultValue={selectedReservation.passenger} />
+                  ) : (
+                    <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>{selectedReservation.passenger}</div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Route</label>
+                  {activeModal === 'edit' ? (
+                    <input type="text" style={selectStyle} defaultValue={selectedReservation.route} />
+                  ) : (
+                    <div style={{ fontSize: '0.875rem' }}>{selectedReservation.route}</div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Airline</label>
+                  {activeModal === 'edit' ? (
+                    <input type="text" style={selectStyle} defaultValue={selectedReservation.airline} />
+                  ) : (
+                    <div style={{ fontSize: '0.875rem' }}>{selectedReservation.airline}</div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Travel Date</label>
+                  {activeModal === 'edit' ? (
+                    <input type="date" style={selectStyle} defaultValue={selectedReservation.travelDate} />
+                  ) : (
+                    <div style={{ fontSize: '0.875rem' }}>{new Date(selectedReservation.travelDate).toLocaleDateString()}</div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Booking Date</label>
+                  {activeModal === 'edit' ? (
+                    <input type="date" style={selectStyle} defaultValue={selectedReservation.bookingDate} />
+                  ) : (
+                    <div style={{ fontSize: '0.875rem' }}>{new Date(selectedReservation.bookingDate).toLocaleDateString()}</div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Amount ($)</label>
+                  {activeModal === 'edit' ? (
+                    <input type="number" step="0.01" style={selectStyle} defaultValue={selectedReservation.amount} />
+                  ) : (
+                    <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>${selectedReservation.amount.toFixed(2)}</div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Agent</label>
+                  {activeModal === 'edit' ? (
+                    <input type="text" style={selectStyle} defaultValue={selectedReservation.agent} />
+                  ) : (
+                    <div style={{ fontSize: '0.875rem' }}>{selectedReservation.agent}</div>
+                  )}
+                </div>
+                
+                <div style={{ gridColumn: '1 / -1', marginTop: '1rem', borderBottom: '1px solid #e5e7eb', paddingBottom: '0.5rem' }}>
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#4b5563', fontWeight: 600, textTransform: 'uppercase' }}>Lifecycle Statuses</h4>
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Booking Status</label>
+                  {activeModal === 'edit' ? (
+                    <select style={selectStyle} defaultValue={selectedReservation.bookingStatus}>
+                      {bookingStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <div><span style={getBadgeStyle(selectedReservation.bookingStatus)}>{selectedReservation.bookingStatus}</span></div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Payment Status</label>
+                  {activeModal === 'edit' ? (
+                    <select style={selectStyle} defaultValue={selectedReservation.paymentStatus}>
+                      {paymentStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <div><span style={getBadgeStyle(selectedReservation.paymentStatus)}>{selectedReservation.paymentStatus}</span></div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Work Status</label>
+                  {activeModal === 'edit' ? (
+                    <select style={selectStyle} defaultValue={selectedReservation.workStatus}>
+                      {workStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <div><span style={getBadgeStyle(selectedReservation.workStatus)}>{selectedReservation.workStatus}</span></div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>SMS Status</label>
+                  {activeModal === 'edit' ? (
+                    <select style={selectStyle} defaultValue={selectedReservation.smsStatus}>
+                      {smsStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <div><span style={getBadgeStyle(selectedReservation.smsStatus)}>{selectedReservation.smsStatus}</span></div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Call Status</label>
+                  {activeModal === 'edit' ? (
+                    <select style={selectStyle} defaultValue={selectedReservation.callStatus}>
+                      {callStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <div><span style={getBadgeStyle(selectedReservation.callStatus)}>{selectedReservation.callStatus}</span></div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>CRM Audit Status</label>
+                  {activeModal === 'edit' ? (
+                    <select style={selectStyle} defaultValue={selectedReservation.crmAuditStatus}>
+                      {crmAuditOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <div><span style={getBadgeStyle(selectedReservation.crmAuditStatus)}>{selectedReservation.crmAuditStatus}</span></div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>Quality Audit Status</label>
+                  {activeModal === 'edit' ? (
+                    <select style={selectStyle} defaultValue={selectedReservation.qualityAuditStatus}>
+                      {qualityAuditOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <div><span style={getBadgeStyle(selectedReservation.qualityAuditStatus)}>{selectedReservation.qualityAuditStatus}</span></div>
+                  )}
+                </div>
+                <div>
+                  <label style={labelStyle}>CB Status</label>
+                  {activeModal === 'edit' ? (
+                    <select style={selectStyle} defaultValue={selectedReservation.cbStatus}>
+                      {cbStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <div><span style={getBadgeStyle(selectedReservation.cbStatus)}>{selectedReservation.cbStatus}</span></div>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+              <button 
+                onClick={() => setActiveModal(null)}
+                style={{ padding: '0.5rem 1.5rem', background: 'white', color: '#4b5563', border: '1px solid #d1d5db', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Close
+              </button>
+              {activeModal === 'edit' && (
+                <button 
+                  onClick={() => {
+                    setActiveModal(null);
+                    setShowSuccessModal(true);
+                  }}
+                  style={{ padding: '0.5rem 1.5rem', background: '#38b2ac', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Save Changes
+                </button>
+              )}
+              {activeModal === 'charge' && (
+                <button 
+                  onClick={() => {
+                    setActiveModal(null);
+                    setShowSuccessModal(true);
+                  }}
+                  style={{ padding: '0.5rem 1.5rem', background: '#38b2ac', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Process Charge
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
