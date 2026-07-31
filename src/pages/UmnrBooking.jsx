@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ExternalLink, CheckCircle2, RefreshCw, Info, Calendar, User, Plane, RotateCw, Check, Loader2, Download, CreditCard, Shield, FileText, FileCheck } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import { getMetadata, setMetadata } from '../services/supabase';
 
 const steps = [
   { id: 1, title: 'Child & Eligibility' },
@@ -20,14 +21,9 @@ const mockSegments = [
 ];
 
 const UmnrBooking = () => {
-  const [currentStep, setCurrentStep] = useState(() => {
-    try { const saved = localStorage.getItem('umnrDraft'); if (saved) return JSON.parse(saved).step || 1; } catch(e) {}
-    return 1;
-  });
+  const [currentStep, setCurrentStep] = useState(1);
 
-  const [formData, setFormData] = useState(() => {
-    try { const saved = localStorage.getItem('umnrDraft'); if (saved && JSON.parse(saved).data) return JSON.parse(saved).data; } catch(e) {}
-    return {
+  const [formData, setFormData] = useState({
       minorName: 'Emma Smith', minorDob: '2012-03-15', minorAge: 12, minorGender: 'Female', minorNat: 'American', minorPass: 'US1234567', minorPassExp: '2027-03-15', minorNatId: '123456789', minorSpc: 'None', minorMeal: 'Regular Meal', minorEmail: 'emma@gmail.com', minorPhone: '+1 212 555 0000',
       serviceUmnr: true, serviceEscort: false, serviceAirport: false, serviceConn: true, isEligible: true,
       contacts: {
@@ -40,11 +36,21 @@ const UmnrBooking = () => {
       approvalStatus: 'Pending',
       payment: { method: 'Customer Card', number: '', exp: '', cvv: '' },
       handover: { dropTime: '', pickTime: '' }
-    };
   });
 
   useEffect(() => {
-    localStorage.setItem('umnrDraft', JSON.stringify({ step: currentStep, data: formData }));
+    const loadDraft = async () => {
+      const saved = await getMetadata('umnrDraft');
+      if (saved) {
+        if (saved.step) setCurrentStep(saved.step);
+        if (saved.data) setFormData(saved.data);
+      }
+    };
+    loadDraft();
+  }, []);
+
+  useEffect(() => {
+    setMetadata('umnrDraft', { step: currentStep, data: formData });
   }, [currentStep, formData]);
 
   const handleNext = () => setCurrentStep(prev => Math.min(prev + 1, 9));

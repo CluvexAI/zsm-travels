@@ -1,10 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Shield, ShieldCheck, CheckSquare, Square } from 'lucide-react';
 import { ROLES, PERMISSION_MATRIX, updateRolePermission } from '../services/mockAuthService';
+import { useAuth } from '../contexts/AuthContext';
 
 const RolesPermissions = () => {
   const [selectedRole, setSelectedRole] = useState(ROLES.SALES_AGENT);
   const [searchQuery, setSearchQuery] = useState('');
+  const { refreshPermissions } = useAuth();
   
   // Local state to force re-renders when matrix changes
   const [matrix, setMatrix] = useState(JSON.parse(JSON.stringify(PERMISSION_MATRIX)));
@@ -20,6 +22,8 @@ const RolesPermissions = () => {
       updated[selectedRole][module][action] = [];
     }
     setMatrix(updated);
+    // Propagate to current live session so menus update instantly
+    refreshPermissions();
   };
 
   const handleSelectAll = (select) => {
@@ -34,6 +38,8 @@ const RolesPermissions = () => {
       });
     });
     setMatrix(updated);
+    // Propagate to current live session
+    refreshPermissions();
   };
 
   const roleList = Object.values(ROLES);

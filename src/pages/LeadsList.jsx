@@ -3,16 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Users, Plus, Search, Filter, MoreHorizontal, LayoutDashboard, BarChart3, Settings, HelpCircle, LogOut, Plane, Bell, History
 } from 'lucide-react';
+import { fetchLeads } from '../services/supabase';
 
 const LeadsList = () => {
   const [leads, setLeads] = useState([]);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const savedLeads = JSON.parse(localStorage.getItem('zsm_leads') || '[]');
-    // Sort by newest first
-    savedLeads.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    setLeads(savedLeads);
+    const loadLeads = async () => {
+      const savedLeads = await fetchLeads();
+      // Sort by newest first
+      savedLeads.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setLeads(savedLeads);
+    };
+    loadLeads();
   }, []);
 
   return (

@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Users, BarChart3, Settings, HelpCircle, LogOut, 
   Plus, Bell, History, Plane, ChevronDown
 } from 'lucide-react';
+import { fetchLeads, saveLeads } from '../services/supabase';
 
 const CreateLead = () => {
   const navigate = useNavigate();
@@ -17,10 +18,13 @@ const CreateLead = () => {
   const [allLeads, setAllLeads] = useState([]);
 
   useEffect(() => {
-    const savedLeads = JSON.parse(localStorage.getItem('zsm_leads') || '[]');
-    setAllLeads(savedLeads);
-    const count = savedLeads.filter(lead => lead.leadStatus === 'Follow-up').length;
-    setFollowUpCount(count);
+    const loadLeads = async () => {
+      const savedLeads = await fetchLeads();
+      setAllLeads(savedLeads);
+      const count = savedLeads.filter(lead => lead.leadStatus === 'Follow-up').length;
+      setFollowUpCount(count);
+    };
+    loadLeads();
   }, []);
 
   const [formData, setFormData] = useState({
@@ -53,10 +57,10 @@ const CreateLead = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const saveLead = () => {
+  const saveLead = async () => {
     const newLead = { ...formData, id: Date.now(), createdAt: new Date().toISOString() };
-    const existing = JSON.parse(localStorage.getItem('zsm_leads') || '[]');
-    localStorage.setItem('zsm_leads', JSON.stringify([...existing, newLead]));
+    const existing = await fetchLeads();
+    await saveLeads([...existing, newLead]);
     alert('Lead Created Successfully!');
     navigate('/reports/leads');
   };

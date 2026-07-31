@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { Bell } from 'lucide-react';
 import { usePermissions } from '../hooks/usePermissions';
+import { fetchLeads } from '../services/supabase';
 
 const getKpiData = (canViewActualCost) => {
   const data = [
@@ -44,12 +45,17 @@ const Dashboard = () => {
   const [recentLeads, setRecentLeads] = useState([]);
 
   const canViewActualCost = hasPermission('Actual Cost', 'View');
+  const canViewReports    = hasPermission('Reports', 'View');
+  const canViewPayments   = hasPermission('Payments', 'View');
   const kpiData = getKpiData(canViewActualCost);
 
   React.useEffect(() => {
-    const savedLeads = JSON.parse(localStorage.getItem('zsm_leads') || '[]');
-    savedLeads.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    setRecentLeads(savedLeads.slice(0, 5));
+    const loadLeads = async () => {
+      const savedLeads = await fetchLeads();
+      savedLeads.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setRecentLeads(savedLeads.slice(0, 5));
+    };
+    loadLeads();
   }, []);
 
   const handleSearch = (e) => {
@@ -177,72 +183,76 @@ const Dashboard = () => {
           ))}
         </div>
 
-        {/* Charts Section */}
-        <div className="card" style={{ height: '500px', backgroundColor: 'white' }}>
-          <div className="card-header" style={{ marginBottom: '2rem' }}>
-            <h2 className="card-title" style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>Total MCO in 2026</h2>
+        {/* Charts Section — only for roles with Payments or Reports access */}
+        {(canViewPayments || canViewReports) && (
+          <div className="card" style={{ height: '500px', backgroundColor: 'white' }}>
+            <div className="card-header" style={{ marginBottom: '2rem' }}>
+              <h2 className="card-title" style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>Total MCO in 2026</h2>
+            </div>
+            
+            <div style={{ height: '400px', width: '100%' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                  <XAxis dataKey="month" stroke="#a0aec0" tickLine={false} axisLine={false} />
+                  <YAxis stroke="#a0aec0" tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} />
+                  <RechartsTooltip 
+                    formatter={(value) => `$${value.toLocaleString()}`}
+                    cursor={{fill: '#f4f5f7'}}
+                    contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '0.25rem', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
+                  />
+                  <Bar dataKey="value" fill="#4ade80" barSize={30} radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          
-          <div style={{ height: '400px', width: '100%' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="month" stroke="#a0aec0" tickLine={false} axisLine={false} />
-                <YAxis stroke="#a0aec0" tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} />
-                <RechartsTooltip 
-                  formatter={(value) => `$${value.toLocaleString()}`}
-                  cursor={{fill: '#f4f5f7'}}
-                  contentStyle={{ backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '0.25rem', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}
-                />
-                <Bar dataKey="value" fill="#4ade80" barSize={30} radius={[2, 2, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        )}
 
-        {/* Recent Leads Widget */}
-        <div className="card" style={{ marginTop: '2rem', backgroundColor: 'white' }}>
-          <div className="card-header" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 className="card-title" style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>Recent Leads</h2>
-            <button 
-              onClick={() => navigate('/reports/leads')} 
-              style={{ padding: '6px 12px', fontSize: '0.875rem', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, color: '#334155' }}>
-              View All
-            </button>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              <thead>
-                <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                  <th style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#64748b' }}>Date</th>
-                  <th style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#64748b' }}>Client</th>
-                  <th style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#64748b' }}>Type</th>
-                  <th style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#64748b' }}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentLeads.length === 0 ? (
-                  <tr>
-                    <td colSpan="4" style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No recent leads found.</td>
+        {/* Recent Leads Widget — only for roles with Reports:View */}
+        {canViewReports && (
+          <div className="card" style={{ marginTop: '2rem', backgroundColor: 'white' }}>
+            <div className="card-header" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 className="card-title" style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>Recent Leads</h2>
+              <button 
+                onClick={() => navigate('/reports/leads')} 
+                style={{ padding: '6px 12px', fontSize: '0.875rem', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, color: '#334155' }}>
+                View All
+              </button>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                    <th style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#64748b' }}>Date</th>
+                    <th style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#64748b' }}>Client</th>
+                    <th style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#64748b' }}>Type</th>
+                    <th style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#64748b' }}>Status</th>
                   </tr>
-                ) : (
-                  recentLeads.map(lead => (
-                    <tr key={lead.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', color: '#334155' }}>{new Date(lead.createdAt).toLocaleDateString()}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', color: '#0f172a', fontWeight: '500' }}>{lead.fullName || 'Unknown'}</td>
-                      <td style={{ padding: '12px 16px', fontSize: '13px', color: '#334155' }}>{lead.leadType}</td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <span style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '500', backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
-                          {lead.leadStatus || 'New'}
-                        </span>
-                      </td>
+                </thead>
+                <tbody>
+                  {recentLeads.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" style={{ padding: '24px', textAlign: 'center', color: '#64748b' }}>No recent leads found.</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    recentLeads.map(lead => (
+                      <tr key={lead.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#334155' }}>{new Date(lead.createdAt).toLocaleDateString()}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#0f172a', fontWeight: '500' }}>{lead.fullName || 'Unknown'}</td>
+                        <td style={{ padding: '12px 16px', fontSize: '13px', color: '#334155' }}>{lead.leadType}</td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <span style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: '500', backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+                            {lead.leadStatus || 'New'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )}
 
       </div>
     </div>

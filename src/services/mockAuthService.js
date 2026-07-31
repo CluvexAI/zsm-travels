@@ -86,10 +86,11 @@ export const PERMISSION_MATRIX = {
     'Email':               { 'View': ['Own'] },
     'Refunds':             { 'Request': ['Own'] },
     'Service Actions':     { 'View': ['Own'], 'Request': ['Own'] },
-    'Quality Escalations': { 'View': ['Own'], 'Create': ['Own'] },
+    'Quality Escalations': { 'View': [],    'Create': ['Own'] },  // Create kept: agents can file escalations; View [] = no Escalation Report page
     'Notes':               { 'View': ['Own'], 'Create': ['Own'] },
-    'Reports':             { 'View': ['Own'], 'Export': ['Own'] },
+    'Reports':             { 'View': [],    'Export': [],   'Create': [] }, // Explicit denial — no Reports access for Sales Agent
     'Audit Logs':          { 'View': ['Own'] },
+
     // Granular Post-Booking Actions — Request only
     'Action: Cancellation for Refund': { 'Request': ['Own'] },
     'Action: Cancellation for Credit': { 'Request': ['Own'] },
@@ -177,7 +178,8 @@ export const PERMISSION_MATRIX = {
     'Email':           { 'View': ['All'] },
     'Gateway Reference': { 'View': ['All'] },
     'Cardholder Declaration': { 'View': ['All'] },
-    'Service Actions': { 'View': ['All'] },
+    'Service Actions': { 'View': [] },  // Explicit denial — QA has no Add Insurance access
+
     'Quality Escalations': {
       'View':     ['All'],
       'Create':   ['All'],
@@ -311,7 +313,8 @@ export const PERMISSION_MATRIX = {
     'Chargebacks':         { 'View': ['All'] },
     'Invoices':            { 'View': ['All'] },
     'Notes':               { 'View': ['All'] },
-    'Service Actions':     { 'View': ['All'] },
+    'Service Actions':     { 'View': [] },  // Explicit denial — Auditor has no Add Insurance access
+
     'Quality Escalations': { 'View': ['All'] },
     'Customer Support':    { 'View': ['All'] },
     'Reports':             { 'View': ['All'], 'Download': ['All'] },
@@ -319,7 +322,49 @@ export const PERMISSION_MATRIX = {
   },
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FEATURE PERMISSION MAP — Single source of truth for every protected feature.
+// Every menu item, route, and UI widget references this map.
+// Format: featureKey -> { module, action, label, path, category }
+// category: 'booking' | 'reports' | 'admin' | 'top'
+// ─────────────────────────────────────────────────────────────────────────────
+export const FEATURE_PERMISSION_MAP = {
+  // ── TOP-LEVEL PAGES ────────────────────────────────────────────────────────
+  'dashboard':            { module: 'Dashboard',     action: 'View',   label: 'Dashboard',           path: '/dashboard',                  category: 'top' },
+  'search':               { module: 'Flight Search', action: 'View',   label: 'Search Service',      path: '/search',                     category: 'top' },
+  'customer-directory':   { module: 'Passengers',    action: 'View',   label: 'Customer Directory',  path: '/customer-directory',         category: 'top' },
+
+  // ── BOOKING MENU ───────────────────────────────────────────────────────────
+  'new-booking':          { module: 'Bookings',                          action: 'Create',   label: 'New Flight Booking',      path: '/new-booking',          category: 'booking' },
+  'profile-info-change':  { module: 'Action: Name Correction',           action: 'Request',  label: 'Profile Info Change',     path: '/profile-info-change',  category: 'booking' },
+  'change-itinerary':     { module: 'Action: Itinerary Change',          action: 'Request',  label: 'Change Itinerary',        path: '/change-itinerary',     category: 'booking' },
+  'cancellation-refund':  { module: 'Action: Cancellation for Refund',   action: 'Request',  label: 'Cancellation for Refund', path: '/cancellation-refund',  category: 'booking' },
+  'cancellation-credit':  { module: 'Action: Cancellation for Credit',   action: 'Request',  label: 'Cancellation for Credit', path: '/cancellation-credit',  category: 'booking' },
+  'seat-assign':          { module: 'Action: Seat Assignment',            action: 'Request',  label: 'Seat Assign',             path: '/seat-assign',          category: 'booking' },
+  'add-baggage':          { module: 'Action: Baggage',                    action: 'Request',  label: 'Add Baggage',             path: '/add-baggage',          category: 'booking' },
+  'add-insurance':        { module: 'Service Actions',                    action: 'View',     label: 'Add Insurance',           path: '/add-insurance',        category: 'booking' },
+  'pet-booking':          { module: 'Action: Pet Booking',                action: 'Request',  label: 'Pet Booking',             path: '/pet-booking',          category: 'booking' },
+  'seat-upgrade':         { module: 'Action: Seat Upgrade',               action: 'Request',  label: 'Seat Upgrade',            path: '/seat-upgrade',         category: 'booking' },
+  'umnr-booking':         { module: 'Action: Minor Alone Booking',        action: 'Request',  label: 'UMNR Booking',            path: '/umnr-booking',         category: 'booking' },
+
+  // ── REPORTS MENU ───────────────────────────────────────────────────────────
+  'retention-reports':    { module: 'Reports',               action: 'View',   label: 'Retention Reports',        path: '/reports/retention-reports',      category: 'reports' },
+  'escalation-report':    { module: 'Quality Escalations',   action: 'View',   label: 'Escalation Report',        path: '/reports/escalation-report',      category: 'reports' },
+  'leads':                { module: 'Reports',               action: 'View',   label: 'Leads',                    path: '/reports/leads',                  category: 'reports' },
+  'create-lead':          { module: 'Reports',               action: 'Create', label: 'Create Lead',              path: '/reports/create-lead',            category: 'reports' },
+  'upcoming-trips':       { module: 'Reports',               action: 'View',   label: 'Upcoming Trips (48 hrs.)', path: '/reports/upcoming-trips-48-hrs',  category: 'reports' },
+  'boarding-pass':        { module: 'Reports',               action: 'View',   label: 'Boarding Pass',            path: '/reports/boarding-pass',          category: 'reports' },
+  'all-website-leads':    { module: 'Reports',               action: 'View',   label: 'All Website Leads',        path: '/reports/all-website-leads',      category: 'reports' },
+  'yesterday-sales':      { module: 'Reports',               action: 'View',   label: 'Yesterday Sales',          path: '/reports/yesterday-sales',        category: 'reports' },
+
+  // ── ADMIN MENU ─────────────────────────────────────────────────────────────
+  'user-management':      { module: 'Users',               action: 'View',   label: 'User Management',     path: '/admin/user-management',   category: 'admin' },
+  'roles-permissions':    { module: 'Roles & Permissions', action: 'View',   label: 'Roles & Permissions', path: '/admin/roles-permissions', category: 'admin' },
+  'audit-logs':           { module: 'Audit Logs',          action: 'View',   label: 'Audit Logs',          path: '/admin/audit-logs',        category: 'admin' },
+};
+
 export const MOCK_USERS = [
+
   {
     userId: 'u_1001',
     employeeId: 'EMP-001',

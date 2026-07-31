@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, ChevronLeft, Check, CreditCard, User, Plane, DollarSign, Search, Calendar, ShieldAlert, ArrowRightLeft, Briefcase, PlaneTakeoff, PlaneLanding, Clock, Award, Loader2, X, Plus, Minus, Download, ExternalLink } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
+import { getMetadata, setMetadata } from '../services/supabase';
 
 const steps = [
   { id: 1, title: 'Flight Selection', icon: <Search size={18} /> },
@@ -25,21 +26,9 @@ const mockFlights = [
 
 const NewBooking = () => {
   const navigate = useNavigate();
-  const [currentStep, setCurrentStep] = useState(() => {
-    try {
-      const saved = localStorage.getItem('newBookingDraft');
-      if (saved) return JSON.parse(saved).currentStep || 1;
-    } catch(e) {}
-    return 1;
-  });
+  const [currentStep, setCurrentStep] = useState(1);
   const [returnStep, setReturnStep] = useState(null);
-  const [tripType, setTripType] = useState(() => {
-    try {
-      const saved = localStorage.getItem('newBookingDraft');
-      if (saved) return JSON.parse(saved).tripType || 'Round Trip';
-    } catch(e) {}
-    return 'Round Trip';
-  });
+  const [tripType, setTripType] = useState('Round Trip');
   
   const [outboundSearchQuery, setOutboundSearchQuery] = useState('');
   const [outboundActiveSearch, setOutboundActiveSearch] = useState('');
@@ -51,15 +40,7 @@ const NewBooking = () => {
   const [isInboundSearching, setIsInboundSearching] = useState(false);
   const [inboundSearchComplete, setInboundSearchComplete] = useState(true);
   
-  const [formData, setFormData] = useState(() => {
-    try {
-      const saved = localStorage.getItem('newBookingDraft');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed.formData) return parsed.formData;
-      }
-    } catch(e) {}
-    return {
+  const [formData, setFormData] = useState({
       passengersCount: 1,
       outboundFlight: null,
       inboundFlight: null,
@@ -77,15 +58,26 @@ const NewBooking = () => {
       customActualMCO: null,
       merchantName: '',
       vendorCode: ''
-    };
   });
+
+  useEffect(() => {
+    const loadDraft = async () => {
+      const saved = await getMetadata('newBookingDraft');
+      if (saved) {
+        if (saved.currentStep) setCurrentStep(saved.currentStep);
+        if (saved.tripType) setTripType(saved.tripType);
+        if (saved.formData) setFormData(saved.formData);
+      }
+    };
+    loadDraft();
+  }, []);
 
   const [cardErrors, setCardErrors] = useState({ cardNumber: '', expiryDate: '', cvv: '' });
   const [cardTouched, setCardTouched] = useState({ cardNumber: false, expiryDate: false, cvv: false });
 
-  // Auto-save to localStorage
+  // Auto-save to Supabase
   useEffect(() => {
-    localStorage.setItem('newBookingDraft', JSON.stringify({ currentStep, tripType, formData }));
+    setMetadata('newBookingDraft', { currentStep, tripType, formData });
   }, [currentStep, tripType, formData]);
 
   // -- Credit Card Helpers --

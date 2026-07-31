@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { authenticateMockUser, getPermissionsForRole, MOCK_USERS, ROLES } from '../services/mockAuthService';
 import { logEvent } from '../services/mockAuditService';
 
@@ -9,13 +9,20 @@ export const AuthProvider = ({ children }) => {
   const [permissions, setPermissions] = useState({});
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
-  useEffect(() => {
-    if (user) {
-      setPermissions(getPermissionsForRole(user.role));
+  // Re-derives permissions from the PERMISSION_MATRIX (which may have been
+  // mutated by updateRolePermission). Call after any permission toggle.
+  const refreshPermissions = useCallback((currentUser) => {
+    const target = currentUser ?? user;
+    if (target) {
+      setPermissions(getPermissionsForRole(target.role));
     } else {
       setPermissions({});
     }
   }, [user]);
+
+  useEffect(() => {
+    refreshPermissions(user);
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const switchUser = (userId) => {
     const newUser = authenticateMockUser(userId);
@@ -50,7 +57,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, permissions, switchUser, login, logout, isLoggedIn, ROLES, MOCK_USERS }}>
+    <AuthContext.Provider value={{ user, permissions, switchUser, login, logout, isLoggedIn, ROLES, MOCK_USERS, refreshPermissions }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Globe, Search, Calendar, User, Phone, Mail, FileText } from 'lucide-react';
+import { fetchLeads } from '../services/supabase';
 
 const AllWebsiteLeads = () => {
   const navigate = useNavigate();
@@ -9,14 +10,17 @@ const AllWebsiteLeads = () => {
   const [statusFilter, setStatusFilter] = useState('All');
 
   useEffect(() => {
-    // Fetch all leads and filter for 'Website Inquiry'
-    const savedLeads = JSON.parse(localStorage.getItem('zsm_leads') || '[]');
-    const filtered = savedLeads.filter(lead => lead.leadSource === 'Website Inquiry');
-    
-    // Sort by newest first
-    filtered.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-    
-    setWebsiteLeads(filtered);
+    const loadLeads = async () => {
+      // Fetch all leads and filter for 'Website Inquiry'
+      const savedLeads = await fetchLeads();
+      const filtered = savedLeads.filter(lead => lead.leadSource === 'Website Inquiry');
+      
+      // Sort by newest first
+      filtered.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      
+      setWebsiteLeads(filtered);
+    };
+    loadLeads();
   }, []);
 
   const filteredData = websiteLeads.filter(lead => {

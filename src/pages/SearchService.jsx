@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, User, Mail, Phone, MoreVertical, ShieldAlert, Loader2 } from 'lucide-react';
+import { fetchBookings, saveBookings } from '../services/supabase';
 
 const baseMockData = {
   enquiryStatus: 'New', enquiryDate: '2026-07-01', enquiryCompletedDate: '2026-07-02',
@@ -69,36 +70,19 @@ const serviceActions = [
 const SearchService = () => {
   const [searchParams] = useSearchParams();
 
-  const [bookings, setBookings] = useState(() => {
-    const saved = localStorage.getItem('zsm_bookings');
-    if (saved) {
-      const parsedBookings = JSON.parse(saved);
-      // Migrate existing local storage bookings to include the new detailed flight structures
-      const migratedBookings = parsedBookings.map(b => {
-        const freshMock = initialMockBookings.find(mock => mock.id === b.id) || baseMockData;
-        return {
-          ...freshMock,
-          ...b, // Prioritize any existing changes (like name, email, etc.)
-          tripType: b.tripType || freshMock.tripType,
-          outboundFlight: b.outboundFlight || freshMock.outboundFlight,
-          inboundFlight: b.inboundFlight || freshMock.inboundFlight,
-          itineraryChangeRequests: b.itineraryChangeRequests || freshMock.itineraryChangeRequests,
-          refNo: b.refNo || freshMock.refNo || ('A' + Math.floor(Math.random() * 1000000000)),
-          enquiryStatus: b.enquiryStatus || freshMock.enquiryStatus,
-          paymentStatus: b.paymentStatus || freshMock.paymentStatus,
-          workStatus: b.workStatus || freshMock.workStatus,
-          smsStatus: b.smsStatus || freshMock.smsStatus,
-          callStatus: b.callStatus || freshMock.callStatus,
-          crmAuditStatus: b.crmAuditStatus || freshMock.crmAuditStatus,
-          qualityAuditStatus: b.qualityAuditStatus || freshMock.qualityAuditStatus,
-          cbStatus: b.cbStatus || freshMock.cbStatus,
-          activityLog: b.activityLog || freshMock.activityLog
-        };
-      });
-      return migratedBookings;
-    }
-    return initialMockBookings;
-  });
+  const [bookings, setBookings] = useState(initialMockBookings);
+
+  useEffect(() => {
+    const loadBookings = async () => {
+      const saved = await fetchBookings();
+      if (saved && saved.length > 0) {
+        setBookings(saved);
+      } else {
+        await saveBookings(initialMockBookings);
+      }
+    };
+    loadBookings();
+  }, []);
 
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
   const [bookingToConfirm, setBookingToConfirm] = useState(null);
@@ -160,7 +144,7 @@ const SearchService = () => {
     setIsConfirmModalOpen(true);
   };
 
-  const confirmBooking = () => {
+  const confirmBooking = async () => {
     if (!bookingToConfirm) return;
     
     const updatedBookings = bookings.map(b => 
@@ -168,7 +152,7 @@ const SearchService = () => {
     );
     
     setBookings(updatedBookings);
-    localStorage.setItem('zsm_bookings', JSON.stringify(updatedBookings));
+    await saveBookings(updatedBookings);
     
     setIsConfirmModalOpen(false);
     setBookingToConfirm(null);
@@ -177,7 +161,7 @@ const SearchService = () => {
     setTimeout(() => setNotification(''), 3000);
   };
 
-  const updateBookingStatus = () => {
+  const updateBookingStatus = async () => {
     if (!selectedBooking) return;
     
     const updatedSelected = { ...selectedBooking, status: detailsStatus };
@@ -196,14 +180,14 @@ const SearchService = () => {
     );
     
     setBookings(updatedBookings);
-    localStorage.setItem('zsm_bookings', JSON.stringify(updatedBookings));
+    await saveBookings(updatedBookings);
     setSelectedBooking(updatedSelected);
     
     setNotification('Booking lifecycle updated successfully.');
     setTimeout(() => setNotification(''), 3000);
   };
 
-  const submitChangeItinerary = () => {
+  const submitChangeItinerary = async () => {
     if (!selectedLegToChange) return;
     
     const newRequest = {
@@ -239,7 +223,7 @@ const SearchService = () => {
     });
     
     setBookings(updatedBookings);
-    localStorage.setItem('zsm_bookings', JSON.stringify(updatedBookings));
+    await saveBookings(updatedBookings);
     
     const updatedSelected = updatedBookings.find(b => b.id === selectedBooking.id);
     setSelectedBooking(updatedSelected);

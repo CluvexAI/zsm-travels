@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plane, AlertTriangle, Calendar, Users, MapPin, Search, Filter, RefreshCw, Download, ChevronDown, Clock } from 'lucide-react';
+import { fetchLeads } from '../services/supabase';
 
 const BoardingPass = () => {
   const navigate = useNavigate();
@@ -17,8 +18,11 @@ const BoardingPass = () => {
 
   // Load data and set up live timer
   useEffect(() => {
-    const savedLeads = JSON.parse(localStorage.getItem('zsm_leads') || '[]');
-    setAllLeads(savedLeads);
+    const loadLeads = async () => {
+      const savedLeads = await fetchLeads();
+      setAllLeads(savedLeads);
+    };
+    loadLeads();
 
     // Update current time every minute to keep countdowns accurate
     const interval = setInterval(() => {

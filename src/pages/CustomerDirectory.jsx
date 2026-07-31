@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Users, UserCheck } from 'lucide-react';
+import { fetchLeads } from '../services/supabase';
 
 const CustomerDirectory = () => {
   const navigate = useNavigate();
@@ -8,20 +9,23 @@ const CustomerDirectory = () => {
   const [convertedCustomers, setConvertedCustomers] = useState([]);
 
   useEffect(() => {
-    const savedLeads = JSON.parse(localStorage.getItem('zsm_leads') || '[]');
-    
-    // Filter to only Converted leads
-    const converted = savedLeads.filter(lead => lead.leadStatus === 'Converted');
-    setConvertedCustomers(converted);
+    const loadData = async () => {
+      const savedLeads = await fetchLeads();
+      
+      // Filter to only Converted leads
+      const converted = savedLeads.filter(lead => lead.leadStatus === 'Converted');
+      setConvertedCustomers(converted);
 
-    // Group by agent
-    const stats = {};
-    converted.forEach(lead => {
-      const agent = lead.salesAgent || 'Unassigned';
-      if (!stats[agent]) stats[agent] = 0;
-      stats[agent]++;
-    });
-    setAgentStats(stats);
+      // Group by agent
+      const stats = {};
+      converted.forEach(lead => {
+        const agent = lead.salesAgent || 'Unassigned';
+        if (!stats[agent]) stats[agent] = 0;
+        stats[agent]++;
+      });
+      setAgentStats(stats);
+    };
+    loadData();
   }, []);
 
   return (

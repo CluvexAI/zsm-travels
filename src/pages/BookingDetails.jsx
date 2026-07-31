@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Plane, User, CreditCard, Mail, ExternalLink, Download, FileText, CheckCircle, AlertCircle } from 'lucide-react';
+import { getMetadata, setMetadata } from '../services/supabase';
 
 const BookingDetails = () => {
   const { bookingId } = useParams();
@@ -10,7 +11,7 @@ const BookingDetails = () => {
 
   useEffect(() => {
     // Mock fetching booking data
-    setTimeout(() => {
+    const fetchData = async () => {
       setBooking({
         bookingId: bookingId || 'B-23490',
         customerId: 'C-8932',
@@ -31,19 +32,20 @@ const BookingDetails = () => {
         }
       });
       
-      const emailStatus = localStorage.getItem(`email_sent_${bookingId}`);
+      const emailStatus = await getMetadata(`email_sent_${bookingId}`);
       if (emailStatus) setEmailSent(true);
 
-      const status = localStorage.getItem(`signature_${bookingId}`);
-      const dataStr = localStorage.getItem(`signature_data_${bookingId}`);
+      const status = await getMetadata(`signature_${bookingId}`);
+      const dataStr = await getMetadata(`signature_data_${bookingId}`);
       if (status === 'SIGNED' && dataStr) {
-        setSignatureData(JSON.parse(dataStr));
+        setSignatureData(typeof dataStr === 'string' ? JSON.parse(dataStr) : dataStr);
       }
-    }, 500);
+    };
+    setTimeout(fetchData, 500);
   }, [bookingId]);
 
-  const handleSendEmail = () => {
-    localStorage.setItem(`email_sent_${bookingId}`, 'true');
+  const handleSendEmail = async () => {
+    await setMetadata(`email_sent_${bookingId}`, 'true');
     setEmailSent(true);
     alert(`Signature request email sent to ${booking?.email}`);
   };

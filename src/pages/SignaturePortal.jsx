@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PlaneTakeoff, PenTool, CheckCircle, AlertCircle, ShieldCheck } from 'lucide-react';
+import { getMetadata, setMetadata } from '../services/supabase';
 
 const SignaturePortal = () => {
   const { bookingId } = useParams();
@@ -15,7 +16,7 @@ const SignaturePortal = () => {
     // In a real app, this would fetch from a backend.
     // Here we'll mock it by checking localStorage for the drafted booking if the ID matches B-23490
     // For demo purposes, we just create a mock booking object.
-    setTimeout(() => {
+    const fetchData = async () => {
       setBooking({
         bookingId: bookingId || 'B-23490',
         customerId: 'C-8932',
@@ -32,28 +33,29 @@ const SignaturePortal = () => {
       });
       
       // Check if already signed
-      const signatureStatus = localStorage.getItem(`signature_${bookingId}`);
+      const signatureStatus = await getMetadata(`signature_${bookingId}`);
       if (signatureStatus === 'SIGNED') {
         setIsSigned(true);
       }
       
       setLoading(false);
-    }, 800);
+    };
+    setTimeout(fetchData, 800);
   }, [bookingId]);
 
-  const handleSign = () => {
+  const handleSign = async () => {
     if (!agreedToTerms || !signatureName.trim()) {
       alert("Please enter your name and agree to the terms.");
       return;
     }
     
     // Save signature status
-    localStorage.setItem(`signature_${bookingId}`, 'SIGNED');
-    localStorage.setItem(`signature_data_${bookingId}`, JSON.stringify({
+    await setMetadata(`signature_${bookingId}`, 'SIGNED');
+    await setMetadata(`signature_data_${bookingId}`, {
       signedBy: signatureName,
       signedAt: new Date().toISOString(),
       ipAddress: '192.168.1.1' // Mock IP
-    }));
+    });
     
     setIsSigned(true);
   };
