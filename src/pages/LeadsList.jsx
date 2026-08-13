@@ -19,6 +19,15 @@ const LeadsList = () => {
     loadLeads();
   }, []);
 
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredLeads = leads.filter(lead => {
+    if (!searchQuery) return true;
+    const term = searchQuery.toLowerCase();
+    const searchable = [lead.fullName, lead.email, lead.phone, lead.leadType, lead.leadStatus].join(' ').toLowerCase();
+    return searchable.includes(term);
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f8fafc', overflow: 'hidden' }}>
       
@@ -39,7 +48,7 @@ const LeadsList = () => {
           <History size={20} color="#64748b" style={{ cursor: 'pointer', strokeWidth: 1.5 }} />
           <div style={{ height: '32px', width: '1px', backgroundColor: '#e2e8f0' }}></div>
           <button 
-            onClick={() => navigate('/reports/create-lead')}
+            onClick={() => navigate('/bookings/create-lead')}
             style={{ padding: '8px 24px', backgroundColor: '#005ed3', color: 'white', fontWeight: '500', fontSize: '13px', borderRadius: '4px', border: 'none', cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Plus size={16} /> New Lead
           </button>
@@ -65,6 +74,8 @@ const LeadsList = () => {
                 <input 
                   type="text" 
                   placeholder="Search leads..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   style={{ padding: '10px 12px 10px 40px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '14px', width: '250px', outline: 'none' }}
                 />
               </div>
@@ -87,18 +98,18 @@ const LeadsList = () => {
                 </tr>
               </thead>
               <tbody>
-                {leads.length === 0 ? (
+                {filteredLeads.length === 0 ? (
                   <tr>
                     <td colSpan="6" style={{ padding: '48px 24px', textAlign: 'center', color: '#64748b' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
                         <Users size={48} color="#cbd5e1" />
                         <p style={{ margin: 0, fontSize: '16px', fontWeight: '500', color: '#334155' }}>No leads found</p>
-                        <p style={{ margin: 0, fontSize: '14px' }}>Get started by creating a new lead.</p>
+                        <p style={{ margin: 0, fontSize: '14px' }}>{searchQuery ? 'Try a different search term.' : 'Get started by creating a new lead.'}</p>
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  leads.map(lead => (
+                  filteredLeads.map(lead => (
                     <tr key={lead.id} style={{ borderBottom: '1px solid #e2e8f0', transition: 'background-color 0.2s' }} onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8fafc'} onMouseOut={e => e.currentTarget.style.backgroundColor = 'transparent'}>
                       <td style={{ padding: '16px 24px', fontSize: '14px', color: '#334155' }}>
                         {new Date(lead.createdAt).toLocaleDateString()}

@@ -54,7 +54,7 @@ const AllWebsiteLeads = () => {
           </div>
         </div>
         <button 
-          onClick={() => navigate('/reports/create-lead')}
+          onClick={() => navigate('/bookings/create-lead')}
           style={{ padding: '10px 20px', backgroundColor: '#0f172a', color: '#ffffff', fontWeight: '600', fontSize: '14px', borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s' }}>
           Back to Dashboard
         </button>

@@ -44,12 +44,11 @@ const LoginPage = ({ onLogin }) => {
       minHeight: '100vh',
       background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f4c75 100%)',
       display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '2rem',
+      flexDirection: 'column',
       fontFamily: "'Inter', 'Segoe UI', sans-serif",
     }}>
-      <div style={{ display: 'flex', gap: '4rem', alignItems: 'center', maxWidth: '1100px', width: '100%' }}>
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+        <div style={{ display: 'flex', gap: '4rem', alignItems: 'center', maxWidth: '1100px', width: '100%' }}>
         {/* Branding Panel */}
         <div style={{ flex: 1, color: 'white' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '2rem' }}>
@@ -174,6 +173,12 @@ const LoginPage = ({ onLogin }) => {
           </div>
         </div>
       </div>
+      </div>
+      
+      {/* Footer */}
+      <footer style={{ padding: '1.5rem', marginTop: 'auto', textAlign: 'center', color: '#cbd5e1', fontSize: '0.9rem', fontWeight: '500', textShadow: '0px 1px 2px rgba(0,0,0,0.5)' }}>
+        <p style={{ margin: 0 }}>Copyright @2026 ZSM eServices Pvt. Ltd.</p>
+      </footer>
     </div>
   );
 };

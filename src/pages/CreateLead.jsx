@@ -59,10 +59,9 @@ const CreateLead = () => {
 
   const saveLead = async () => {
     const newLead = { ...formData, id: Date.now(), createdAt: new Date().toISOString() };
-    const existing = await fetchLeads();
-    await saveLeads([...existing, newLead]);
+    await saveLeads([newLead]);
     alert('Lead Created Successfully!');
-    navigate('/reports/leads');
+    navigate('/dashboard');
   };
 
   const UrgencyButton = ({ level, color, label }) => {

@@ -27,6 +27,7 @@ import SeatUpgrade from './pages/SeatUpgrade';
 import UmnrBooking from './pages/UmnrBooking';
 import YesterdaySales from './pages/YesterdaySales';
 import EscalationReport from './pages/EscalationReport';
+import PaymentPage from './pages/PaymentPage';
 import LoginPage from './pages/LoginPage';
 import UserManagement from './pages/UserManagement';
 import AuditLogsPage from './pages/AuditLogsPage';
@@ -151,7 +152,7 @@ function AppRoutes() {
               <LeadsList />
             </ProtectedRoute>
           } />
-          <Route path="reports/create-lead" element={
+          <Route path="bookings/create-lead" element={
             <ProtectedRoute featureKey="create-lead">
               <CreateLead />
             </ProtectedRoute>
@@ -174,6 +175,13 @@ function AppRoutes() {
           <Route path="reports/yesterday-sales" element={
             <ProtectedRoute featureKey="yesterday-sales">
               <YesterdaySales />
+            </ProtectedRoute>
+          } />
+          
+          {/* ─── Payment ─── */}
+          <Route path="payment" element={
+            <ProtectedRoute featureKey="payment">
+              <PaymentPage />
             </ProtectedRoute>
           } />
 

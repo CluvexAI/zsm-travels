@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Save, Search, Filter, Eye, Edit3, ChevronLeft, ChevronRight, Download, CheckCircle, X, CreditCard } from 'lucide-react';
 import { filterDataByScope } from '../services/mockAuthService';
 import { useAuth } from '../contexts/AuthContext';
+import { fetchBookings, saveBookings } from '../services/supabase';
 
 const bookingStatusOptions = ['All', 'On Hold', 'Confirmed', 'Cancelled', 'Refunded', 'Pending', 'Voided'];
 const paymentStatusOptions = ['All', 'Pending', 'Authorized', 'Captured', 'Declined', 'Refunded', 'Chargeback'];
@@ -12,25 +13,6 @@ const crmAuditOptions = ['All', 'Pending', 'Passed', 'Failed', 'In Review', 'Wai
 const qualityAuditOptions = ['All', 'Passed', 'Failed', 'Pending', 'In Review', 'Waived'];
 const cbStatusOptions = ['All', 'Completed', 'Pending', 'In Progress', 'Cancelled', 'Expired'];
 const actionOptions = ['All', 'Send Reminder', 'Cancel Booking', 'Request Refund', 'Escalate Issue', 'Process Payment'];
-
-// Mock reservations data
-const mockReservations = [
-  { id: 'ZSM-10041', pnr: 'XKRT4P', passenger: 'John M. Smith', route: 'JFK → LAX', airline: 'American Airlines', travelDate: '2026-08-15', bookingDate: '2026-07-18', amount: 489.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.', action: 'Send Reminder' },
-  { id: 'ZSM-10042', pnr: 'BMNW2L', passenger: 'Emily R. Johnson', route: 'ORD → MIA', airline: 'Delta Air Lines', travelDate: '2026-08-20', bookingDate: '2026-07-19', amount: 345.50, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.', action: 'Process Payment' },
-  { id: 'ZSM-10043', pnr: 'FDGT7Q', passenger: 'Robert A. Williams', route: 'SFO → SEA', airline: 'United Airlines', travelDate: '2026-08-10', bookingDate: '2026-07-17', amount: 215.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'In Progress', smsStatus: 'Sent', callStatus: 'No Answer', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.', action: 'Request Refund' },
-  { id: 'ZSM-10044', pnr: 'PLRV9S', passenger: 'Maria T. Garcia', route: 'LAX → JFK', airline: 'JetBlue Airways', travelDate: '2026-09-01', bookingDate: '2026-07-20', amount: 529.00, bookingStatus: 'Confirmed', paymentStatus: 'Authorized', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'In Review', qualityAuditStatus: 'Passed', cbStatus: 'In Progress', agent: 'David L.', action: 'Escalate Issue' },
-  { id: 'ZSM-10045', pnr: 'HCNK3W', passenger: 'James L. Brown', route: 'DFW → ATL', airline: 'American Airlines', travelDate: '2026-08-05', bookingDate: '2026-07-15', amount: 178.00, bookingStatus: 'Cancelled', paymentStatus: 'Refunded', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.', action: 'Cancel Booking' },
-  { id: 'ZSM-10046', pnr: 'YWMZ5A', passenger: 'Patricia D. Davis', route: 'BOS → DCA', airline: 'Delta Air Lines', travelDate: '2026-08-22', bookingDate: '2026-07-21', amount: 298.50, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Voicemail', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.', action: 'Send Reminder' },
-  { id: 'ZSM-10047', pnr: 'TQJS8E', passenger: 'Michael K. Wilson', route: 'MIA → ORD', airline: 'United Airlines', travelDate: '2026-08-18', bookingDate: '2026-07-16', amount: 412.00, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Completed', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'David L.', action: 'Process Payment' },
-  { id: 'ZSM-10048', pnr: 'VNLR6D', passenger: 'Linda S. Martinez', route: 'SEA → SFO', airline: 'Alaska Airlines', travelDate: '2026-08-25', bookingDate: '2026-07-22', amount: 189.00, bookingStatus: 'Pending', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', cbStatus: 'Pending', agent: 'Sarah K.', action: 'Send Reminder' },
-  { id: 'ZSM-10049', pnr: 'CKWP1F', passenger: 'David W. Anderson', route: 'ATL → LAX', airline: 'Delta Air Lines', travelDate: '2026-08-12', bookingDate: '2026-07-14', amount: 567.00, bookingStatus: 'On Hold', paymentStatus: 'Authorized', workStatus: 'Escalated', smsStatus: 'Failed', callStatus: 'Busy', crmAuditStatus: 'Failed', qualityAuditStatus: 'Failed', cbStatus: 'Cancelled', agent: 'Mike T.', action: 'Escalate Issue' },
-  { id: 'ZSM-10050', pnr: 'RGXN4H', passenger: 'Susan P. Thomas', route: 'JFK → LHR', airline: 'British Airways', travelDate: '2026-09-10', bookingDate: '2026-07-20', amount: 1245.00, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'David L.', action: 'Request Refund' },
-  { id: 'ZSM-10051', pnr: 'MPHT2J', passenger: 'Charles B. Jackson', route: 'LAX → HNL', airline: 'Hawaiian Airlines', travelDate: '2026-08-28', bookingDate: '2026-07-19', amount: 389.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Sent', callStatus: 'No Answer', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.', action: 'Cancel Booking' },
-  { id: 'ZSM-10052', pnr: 'LBSW7K', passenger: 'Karen E. White', route: 'ORD → DEN', airline: 'United Airlines', travelDate: '2026-08-08', bookingDate: '2026-07-18', amount: 245.50, bookingStatus: 'Cancelled', paymentStatus: 'Refunded', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Connected', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.', action: 'Request Refund' },
-  { id: 'ZSM-10053', pnr: 'QDYT9M', passenger: 'Daniel R. Harris', route: 'DCA → BOS', airline: 'JetBlue Airways', travelDate: '2026-08-30', bookingDate: '2026-07-21', amount: 312.00, bookingStatus: 'Pending', paymentStatus: 'Pending', workStatus: 'In Progress', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'In Review', qualityAuditStatus: 'In Review', cbStatus: 'In Progress', agent: 'David L.', action: 'Send Reminder' },
-  { id: 'ZSM-10054', pnr: 'FXZN3P', passenger: 'Nancy C. Clark', route: 'MIA → JFK', airline: 'American Airlines', travelDate: '2026-09-05', bookingDate: '2026-07-22', amount: 435.00, bookingStatus: 'On Hold', paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending', crmAuditStatus: 'Pending', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Sarah K.', action: 'Process Payment' },
-  { id: 'ZSM-10055', pnr: 'WKRM6R', passenger: 'Steven J. Lewis', route: 'SFO → JFK', airline: 'Delta Air Lines', travelDate: '2026-08-16', bookingDate: '2026-07-15', amount: 678.50, bookingStatus: 'Confirmed', paymentStatus: 'Captured', workStatus: 'Completed', smsStatus: 'Delivered', callStatus: 'Completed', crmAuditStatus: 'Passed', qualityAuditStatus: 'Passed', cbStatus: 'Completed', agent: 'Mike T.', action: 'Cancel Booking' },
-];
 
 const ROWS_PER_PAGE = 8;
 
@@ -49,20 +31,155 @@ const RetentionReports = () => {
 
   const { user } = useAuth();
   
+  const [rawBookings, setRawBookings] = useState([]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      const data = await fetchBookings();
+      if (data) {
+        setRawBookings(data);
+      }
+    };
+    loadData();
+  }, []);
+
+  const mappedReservations = useMemo(() => {
+    return rawBookings.map(b => ({
+      id: b.id,
+      pnr: b.pnr || b.outboundFlight?.pnr || 'N/A',
+      passenger: b.passengerName || b.name || 'Unknown',
+      route: b.outboundFlight ? `${b.outboundFlight.departureAirport} → ${b.outboundFlight.arrivalAirport}` : 'Unknown',
+      airline: b.outboundFlight?.airline || 'Unknown',
+      travelDate: b.travelDate || b.outboundFlight?.departureDate || 'N/A',
+      bookingDate: b.date || 'N/A',
+      amount: parseFloat((b.amount || '0').toString().replace('$', '')) || 0,
+      bookingStatus: b.status || 'Pending',
+      paymentStatus: b.paymentStatus || 'Pending',
+      workStatus: b.workStatus || 'Pending',
+      smsStatus: b.smsStatus || 'Pending',
+      callStatus: b.callStatus || 'Pending',
+      crmAuditStatus: b.crmAuditStatus || 'Pending',
+      qualityAuditStatus: b.qualityAuditStatus || 'Pending',
+      cbStatus: b.cbStatus || 'Pending',
+      agent: b.agent || 'System',
+      action: b.action || 'None',
+      _original: b // Keep reference to original booking object
+    }));
+  }, [rawBookings]);
+
   // Simulate backend data fetching with scope limits applied BEFORE any frontend filtering
   const scopedReservations = useMemo(() => {
-    return filterDataByScope(mockReservations, user, 'Bookings', 'View');
-  }, [user]);
+    return filterDataByScope(mappedReservations, user, 'Bookings', 'View');
+  }, [mappedReservations, user]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [activeModal, setActiveModal] = useState(null); // 'view', 'edit', null
   const [selectedReservation, setSelectedReservation] = useState(null);
+  const [editForm, setEditForm] = useState({});
 
   const handleChange = (field, value) => {
     setLifecycle(prev => ({ ...prev, [field]: value }));
     setCurrentPage(1);
+  };
+
+  const handleEditChange = (field, value) => {
+    setEditForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const openEditModal = (r) => {
+    setSelectedReservation(r);
+    setEditForm({
+      pnr: r.pnr,
+      passenger: r.passenger,
+      route: r.route,
+      airline: r.airline,
+      travelDate: r.travelDate,
+      bookingDate: r.bookingDate,
+      amount: r.amount,
+      agent: r.agent,
+      bookingStatus: r.bookingStatus,
+      paymentStatus: r.paymentStatus,
+      workStatus: r.workStatus,
+      smsStatus: r.smsStatus,
+      callStatus: r.callStatus,
+      crmAuditStatus: r.crmAuditStatus,
+      qualityAuditStatus: r.qualityAuditStatus,
+      cbStatus: r.cbStatus
+    });
+    setActiveModal('edit');
+  };
+
+  const saveEditedReservation = async () => {
+    if (!selectedReservation || !selectedReservation._original) return;
+
+    // Update the specific fields that are editable
+    const originalBooking = { ...selectedReservation._original };
+    
+    // Map editForm back to the original booking format
+    if (editForm.pnr !== undefined) originalBooking.pnr = editForm.pnr;
+    if (editForm.passenger !== undefined) originalBooking.name = editForm.passenger; // Or passengerName
+    if (editForm.travelDate !== undefined) originalBooking.travelDate = editForm.travelDate;
+    if (editForm.bookingDate !== undefined) originalBooking.date = editForm.bookingDate;
+    if (editForm.amount !== undefined) originalBooking.amount = `$${editForm.amount}`;
+    if (editForm.agent !== undefined) originalBooking.agent = editForm.agent;
+    
+    // Map lifecycle statuses
+    if (editForm.bookingStatus !== undefined) originalBooking.status = editForm.bookingStatus;
+    if (editForm.paymentStatus !== undefined) originalBooking.paymentStatus = editForm.paymentStatus;
+    if (editForm.workStatus !== undefined) originalBooking.workStatus = editForm.workStatus;
+    if (editForm.smsStatus !== undefined) originalBooking.smsStatus = editForm.smsStatus;
+    if (editForm.callStatus !== undefined) originalBooking.callStatus = editForm.callStatus;
+    if (editForm.crmAuditStatus !== undefined) originalBooking.crmAuditStatus = editForm.crmAuditStatus;
+    if (editForm.qualityAuditStatus !== undefined) originalBooking.qualityAuditStatus = editForm.qualityAuditStatus;
+    if (editForm.cbStatus !== undefined) originalBooking.cbStatus = editForm.cbStatus;
+
+    // Update state
+    const updatedRawBookings = rawBookings.map(b => b.id === originalBooking.id ? originalBooking : b);
+    setRawBookings(updatedRawBookings);
+    
+    // Save to Supabase
+    await saveBookings(updatedRawBookings);
+    
+    setActiveModal(null);
+    setShowSuccessModal(true);
+  };
+
+  const handleBulkSave = async () => {
+    const statusesToUpdate = {};
+    if (lifecycle.bookingStatus !== 'All') statusesToUpdate.status = lifecycle.bookingStatus;
+    if (lifecycle.paymentStatus !== 'All') statusesToUpdate.paymentStatus = lifecycle.paymentStatus;
+    if (lifecycle.workStatus !== 'All') statusesToUpdate.workStatus = lifecycle.workStatus;
+    if (lifecycle.smsStatus !== 'All') statusesToUpdate.smsStatus = lifecycle.smsStatus;
+    if (lifecycle.callStatus !== 'All') statusesToUpdate.callStatus = lifecycle.callStatus;
+    if (lifecycle.crmAuditStatus !== 'All') statusesToUpdate.crmAuditStatus = lifecycle.crmAuditStatus;
+    if (lifecycle.qualityAuditStatus !== 'All') statusesToUpdate.qualityAuditStatus = lifecycle.qualityAuditStatus;
+    if (lifecycle.cbStatus !== 'All') statusesToUpdate.cbStatus = lifecycle.cbStatus;
+
+    if (Object.keys(statusesToUpdate).length === 0) {
+      setShowSuccessModal(true);
+      return;
+    }
+
+    const updatedRawBookings = [...rawBookings];
+    let hasChanges = false;
+
+    // Apply only to filtered reservations
+    filteredReservations.forEach(r => {
+      const idx = updatedRawBookings.findIndex(b => b.id === r.id);
+      if (idx !== -1) {
+        updatedRawBookings[idx] = { ...updatedRawBookings[idx], ...statusesToUpdate };
+        hasChanges = true;
+      }
+    });
+
+    if (hasChanges) {
+      setRawBookings(updatedRawBookings);
+      await saveBookings(updatedRawBookings);
+    }
+    
+    setShowSuccessModal(true);
   };
 
   // Filter reservations based on lifecycle filters and search
@@ -365,7 +482,7 @@ const RetentionReports = () => {
           {/* Save Button */}
           <div>
             <button
-              onClick={() => setShowSuccessModal(true)}
+              onClick={handleBulkSave}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -563,7 +680,7 @@ const RetentionReports = () => {
                         </button>
                         <button
                           title="Edit"
-                          onClick={() => { setSelectedReservation(r); setActiveModal('edit'); }}
+                          onClick={() => openEditModal(r)}
                           style={{
                             padding: '0.3rem',
                             borderRadius: '4px',
@@ -757,7 +874,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>PNR</label>
                   {activeModal === 'edit' ? (
-                    <input type="text" style={selectStyle} defaultValue={selectedReservation.pnr} />
+                    <input type="text" style={selectStyle} value={editForm.pnr || ''} onChange={e => handleEditChange('pnr', e.target.value)} />
                   ) : (
                     <div style={{ fontSize: '0.875rem', fontWeight: 600, fontFamily: 'monospace' }}>{selectedReservation.pnr}</div>
                   )}
@@ -765,7 +882,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Passenger Name</label>
                   {activeModal === 'edit' ? (
-                    <input type="text" style={selectStyle} defaultValue={selectedReservation.passenger} />
+                    <input type="text" style={selectStyle} value={editForm.passenger || ''} onChange={e => handleEditChange('passenger', e.target.value)} />
                   ) : (
                     <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>{selectedReservation.passenger}</div>
                   )}
@@ -773,7 +890,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Route</label>
                   {activeModal === 'edit' ? (
-                    <input type="text" style={selectStyle} defaultValue={selectedReservation.route} />
+                    <input type="text" style={selectStyle} value={editForm.route || ''} onChange={e => handleEditChange('route', e.target.value)} />
                   ) : (
                     <div style={{ fontSize: '0.875rem' }}>{selectedReservation.route}</div>
                   )}
@@ -781,7 +898,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Airline</label>
                   {activeModal === 'edit' ? (
-                    <input type="text" style={selectStyle} defaultValue={selectedReservation.airline} />
+                    <input type="text" style={selectStyle} value={editForm.airline || ''} onChange={e => handleEditChange('airline', e.target.value)} />
                   ) : (
                     <div style={{ fontSize: '0.875rem' }}>{selectedReservation.airline}</div>
                   )}
@@ -789,7 +906,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Travel Date</label>
                   {activeModal === 'edit' ? (
-                    <input type="date" style={selectStyle} defaultValue={selectedReservation.travelDate} />
+                    <input type="date" style={selectStyle} value={editForm.travelDate || ''} onChange={e => handleEditChange('travelDate', e.target.value)} />
                   ) : (
                     <div style={{ fontSize: '0.875rem' }}>{new Date(selectedReservation.travelDate).toLocaleDateString()}</div>
                   )}
@@ -797,7 +914,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Booking Date</label>
                   {activeModal === 'edit' ? (
-                    <input type="date" style={selectStyle} defaultValue={selectedReservation.bookingDate} />
+                    <input type="date" style={selectStyle} value={editForm.bookingDate || ''} onChange={e => handleEditChange('bookingDate', e.target.value)} />
                   ) : (
                     <div style={{ fontSize: '0.875rem' }}>{new Date(selectedReservation.bookingDate).toLocaleDateString()}</div>
                   )}
@@ -805,7 +922,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Amount ($)</label>
                   {activeModal === 'edit' ? (
-                    <input type="number" step="0.01" style={selectStyle} defaultValue={selectedReservation.amount} />
+                    <input type="number" step="0.01" style={selectStyle} value={editForm.amount || ''} onChange={e => handleEditChange('amount', e.target.value)} />
                   ) : (
                     <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>${selectedReservation.amount.toFixed(2)}</div>
                   )}
@@ -813,7 +930,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Agent</label>
                   {activeModal === 'edit' ? (
-                    <input type="text" style={selectStyle} defaultValue={selectedReservation.agent} />
+                    <input type="text" style={selectStyle} value={editForm.agent || ''} onChange={e => handleEditChange('agent', e.target.value)} />
                   ) : (
                     <div style={{ fontSize: '0.875rem' }}>{selectedReservation.agent}</div>
                   )}
@@ -826,7 +943,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Booking Status</label>
                   {activeModal === 'edit' ? (
-                    <select style={selectStyle} defaultValue={selectedReservation.bookingStatus}>
+                    <select style={selectStyle} value={editForm.bookingStatus || ''} onChange={e => handleEditChange('bookingStatus', e.target.value)}>
                       {bookingStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
                     </select>
                   ) : (
@@ -836,7 +953,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Payment Status</label>
                   {activeModal === 'edit' ? (
-                    <select style={selectStyle} defaultValue={selectedReservation.paymentStatus}>
+                    <select style={selectStyle} value={editForm.paymentStatus || ''} onChange={e => handleEditChange('paymentStatus', e.target.value)}>
                       {paymentStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
                     </select>
                   ) : (
@@ -846,7 +963,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Work Status</label>
                   {activeModal === 'edit' ? (
-                    <select style={selectStyle} defaultValue={selectedReservation.workStatus}>
+                    <select style={selectStyle} value={editForm.workStatus || ''} onChange={e => handleEditChange('workStatus', e.target.value)}>
                       {workStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
                     </select>
                   ) : (
@@ -856,7 +973,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>SMS Status</label>
                   {activeModal === 'edit' ? (
-                    <select style={selectStyle} defaultValue={selectedReservation.smsStatus}>
+                    <select style={selectStyle} value={editForm.smsStatus || ''} onChange={e => handleEditChange('smsStatus', e.target.value)}>
                       {smsStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
                     </select>
                   ) : (
@@ -866,7 +983,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Call Status</label>
                   {activeModal === 'edit' ? (
-                    <select style={selectStyle} defaultValue={selectedReservation.callStatus}>
+                    <select style={selectStyle} value={editForm.callStatus || ''} onChange={e => handleEditChange('callStatus', e.target.value)}>
                       {callStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
                     </select>
                   ) : (
@@ -876,7 +993,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>CRM Audit Status</label>
                   {activeModal === 'edit' ? (
-                    <select style={selectStyle} defaultValue={selectedReservation.crmAuditStatus}>
+                    <select style={selectStyle} value={editForm.crmAuditStatus || ''} onChange={e => handleEditChange('crmAuditStatus', e.target.value)}>
                       {crmAuditOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
                     </select>
                   ) : (
@@ -886,7 +1003,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>Quality Audit Status</label>
                   {activeModal === 'edit' ? (
-                    <select style={selectStyle} defaultValue={selectedReservation.qualityAuditStatus}>
+                    <select style={selectStyle} value={editForm.qualityAuditStatus || ''} onChange={e => handleEditChange('qualityAuditStatus', e.target.value)}>
                       {qualityAuditOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
                     </select>
                   ) : (
@@ -896,7 +1013,7 @@ const RetentionReports = () => {
                 <div>
                   <label style={labelStyle}>CB Status</label>
                   {activeModal === 'edit' ? (
-                    <select style={selectStyle} defaultValue={selectedReservation.cbStatus}>
+                    <select style={selectStyle} value={editForm.cbStatus || ''} onChange={e => handleEditChange('cbStatus', e.target.value)}>
                       {cbStatusOptions.filter(o => o !== 'All').map(o => <option key={o}>{o}</option>)}
                     </select>
                   ) : (
@@ -915,10 +1032,7 @@ const RetentionReports = () => {
               </button>
               {activeModal === 'edit' && (
                 <button 
-                  onClick={() => {
-                    setActiveModal(null);
-                    setShowSuccessModal(true);
-                  }}
+                  onClick={saveEditedReservation}
                   style={{ padding: '0.5rem 1.5rem', background: '#38b2ac', color: 'white', border: 'none', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}
                 >
                   Save Changes

@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   AlertCircle, AlertOctagon, CheckCircle2, Clock, 
   Search, Filter, Download, Plus, MoreVertical, 
   X, Calendar, ChevronDown, CheckSquare, MessageCircle, XCircle, Users, Activity, ExternalLink, Paperclip, ChevronRight, Check
 } from 'lucide-react';
+import { fetchEscalations, saveEscalations, fetchBookings } from '../services/supabase';
 
 const mockEscalations = [
   { id: 'ESC-00125', priority: 'Critical', status: 'In Progress', bookingRef: 'BK-10294', pnr: 'XKRT4P', passenger: 'John Smith', customerPhone: '+1 212-555-0141', customerEmail: 'john.smith@email.com', flight: 'AA 100', route: 'JFK → LAX', flightDate: '2026-08-15', type: 'Flight Cancellation', issue: 'Customer requesting urgent rebooking due to cancelled flight. Customer is requesting an urgent alternative flight and confirmation before departure.', vendor: 'American Airlines', assignedTo: 'Sarah Agent', createdOn: '2026-07-24T08:30:00', slaDue: '2026-07-24T09:30:00', slaStatus: 'Breached' },
@@ -42,13 +43,33 @@ const EscalationReport = () => {
     priority: 'Medium',
     issue: '',
     description: '',
-    assignedTo: ''
+    assignedTo: '',
+    _fullBooking: null
   });
   const [attachedFile, setAttachedFile] = useState(null);
   const [successToast, setSuccessToast] = useState(null);
 
   // Table Data State
-  const [escalations, setEscalations] = useState(mockEscalations);
+  const [escalations, setEscalations] = useState([]);
+  const [bookings, setBookings] = useState([]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      const savedEscalations = await fetchEscalations();
+      if (savedEscalations && savedEscalations.length > 0) {
+        setEscalations(savedEscalations);
+      } else {
+        setEscalations(mockEscalations);
+        await saveEscalations(mockEscalations);
+      }
+      
+      const savedBookings = await fetchBookings();
+      if (savedBookings && savedBookings.length > 0) {
+        setBookings(savedBookings);
+      }
+    };
+    loadData();
+  }, []);
 
   const filteredEscalations = escalations.filter(esc => {
     const matchesSearch = searchQuery === '' || 
@@ -84,34 +105,38 @@ const EscalationReport = () => {
     }
   };
 
-  const handleCreateSubmit = () => {
-    // Generate new ID and append to mock list
+  const handleCreateSubmit = async () => {
     const newId = `ESC-00${130 + escalations.length}`;
+    const b = createData._fullBooking;
+    
     const newEsc = {
       id: newId,
       priority: createData.priority,
       status: 'Open',
-      bookingRef: createData.selectedBooking ? 'BK-88888' : 'N/A',
-      pnr: createData.selectedBooking ? 'NWPNR1' : 'N/A',
-      passenger: createData.selectedBooking ? 'Test Passenger' : 'N/A',
-      customerPhone: '+1 000-000-0000',
-      customerEmail: 'test@email.com',
-      flight: 'TEST 100',
-      route: 'TEST → TEST',
-      flightDate: '2026-10-10',
+      bookingRef: createData.selectedBooking || 'N/A',
+      pnr: b ? (b.pnr || 'N/A') : 'N/A',
+      passenger: b ? b.passName : 'N/A',
+      customerPhone: b ? (b.phone || '+1 000-000-0000') : '+1 000-000-0000',
+      customerEmail: b ? (b.email || 'test@email.com') : 'test@email.com',
+      flight: b ? b.flightStr : 'TEST 100',
+      route: b ? b.routeStr : 'TEST → TEST',
+      flightDate: b ? b.dateStr : '2026-10-10',
       type: createData.escalationType,
       issue: createData.issue,
-      vendor: 'Test Airline',
+      vendor: (b && b.outboundFlight) ? b.outboundFlight.airline : 'Unknown Vendor',
       assignedTo: createData.assignedTo,
       createdOn: new Date().toISOString(),
       slaDue: new Date(new Date().getTime() + 4*3600*1000).toISOString(),
       slaStatus: 'Within SLA'
     };
     
-    setEscalations([newEsc, ...escalations]);
+    const updatedEscalations = [newEsc, ...escalations];
+    setEscalations(updatedEscalations);
+    await saveEscalations(updatedEscalations);
+    
     setActiveModal(null);
     setCreateStep(1);
-    setCreateData({ bookingSearch: '', selectedBooking: null, escalationType: '', priority: 'Medium', issue: '', description: '', assignedTo: '' });
+    setCreateData({ bookingSearch: '', selectedBooking: null, _fullBooking: null, escalationType: '', priority: 'Medium', issue: '', description: '', assignedTo: '' });
     
     // Show success toast
     setSuccessToast(`Escalation ${newId} created successfully and assigned to ${createData.assignedTo}.`);
@@ -594,6 +619,28 @@ const EscalationReport = () => {
                 </div>
               </div>
 
+              {/* Display existing notes if any */}
+              {selectedEscalation.notes && selectedEscalation.notes.length > 0 && (
+                <div className="section-box">
+                  <div className="section-title">Saved Notes</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {selectedEscalation.notes.map((note, idx) => (
+                      <div key={idx} style={{ background: '#f8fafc', padding: '1rem', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                        <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.5rem', fontWeight: 600 }}>
+                          {new Date(note.timestamp).toLocaleString()}
+                        </div>
+                        {note.text && <div style={{ fontSize: '0.875rem', color: '#1e293b', marginBottom: note.file ? '0.5rem' : '0' }}>{note.text}</div>}
+                        {note.file && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: '#e2e8f0', padding: '0.25rem 0.75rem', borderRadius: '4px', fontSize: '0.75rem', color: '#475569', fontWeight: 600 }}>
+                            <Paperclip size={12} /> {note.file}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Section F - Internal Notes */}
               <div className="section-box">
                 <div className="section-title">Internal Notes</div>
@@ -607,6 +654,7 @@ const EscalationReport = () => {
                   />
                 </div>
                 <textarea 
+                  id="internal-note-textarea"
                   rows={3} 
                   placeholder="Write an internal note..."
                   style={{ width: '100%', padding: '0.75rem', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '0.875rem', outline: 'none', marginBottom: '0.75rem', resize: 'vertical' }}
@@ -627,10 +675,30 @@ const EscalationReport = () => {
                   <button onClick={() => document.getElementById('internal-file-upload').click()} style={{ padding: '0.5rem 1rem', background: 'white', border: '1px solid #d1d5db', borderRadius: '4px', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', color: '#4b5563', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                     <Paperclip size={14} /> {attachedFile ? 'Change File' : 'Attach File'}
                   </button>
-                  <button onClick={() => {
-                    // Logic to handle saving note and file
+                  <button onClick={async () => {
+                    const noteText = document.getElementById('internal-note-textarea').value;
+                    if (!noteText && !attachedFile) return;
+                    
+                    const newNote = {
+                      text: noteText,
+                      file: attachedFile ? attachedFile.name : null,
+                      timestamp: new Date().toISOString()
+                    };
+                    
+                    const updatedEsc = {
+                      ...selectedEscalation,
+                      notes: [...(selectedEscalation.notes || []), newNote]
+                    };
+                    
+                    const updatedEscalations = escalations.map(e => e.id === updatedEsc.id ? updatedEsc : e);
+                    
+                    setEscalations(updatedEscalations);
+                    setSelectedEscalation(updatedEsc);
+                    await saveEscalations(updatedEscalations);
+                    
+                    document.getElementById('internal-note-textarea').value = '';
                     setAttachedFile(null);
-                    setSuccessToast('Internal note and file saved successfully.');
+                    setSuccessToast('Internal note and file saved successfully to database.');
                     setTimeout(() => setSuccessToast(null), 3000);
                   }} style={{ padding: '0.5rem 1.5rem', background: '#111827', border: 'none', borderRadius: '4px', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', color: 'white' }}>
                     Add Note
@@ -679,28 +747,57 @@ const EscalationReport = () => {
                 </div>
                 
                 {createData.bookingSearch.length > 2 && !createData.selectedBooking && (
-                  <div style={{ border: '1px solid #e5e7eb', borderRadius: '6px', marginBottom: '1.5rem' }}>
-                    <div 
-                      onClick={() => setCreateData({...createData, selectedBooking: 'BK-88888'})}
-                      style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 700, color: '#1f2937' }}>BK-88888 / NWPNR1</div>
-                        <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>Test Passenger • TEST 100 • Oct 10, 2026</div>
-                      </div>
-                      <button style={{ padding: '0.25rem 0.75rem', background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>Select</button>
-                    </div>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: '6px', marginBottom: '1.5rem', maxHeight: '200px', overflowY: 'auto' }}>
+                    {bookings.filter(b => 
+                      (b.refNo && b.refNo.toLowerCase().includes(createData.bookingSearch.toLowerCase())) ||
+                      (b.pnr && b.pnr.toLowerCase().includes(createData.bookingSearch.toLowerCase())) ||
+                      (b.passengerName && b.passengerName.toLowerCase().includes(createData.bookingSearch.toLowerCase())) ||
+                      (b.name && b.name.toLowerCase().includes(createData.bookingSearch.toLowerCase())) ||
+                      (b.phone && b.phone.includes(createData.bookingSearch))
+                    ).slice(0, 5).map(b => {
+                      const passName = b.passengerName || b.name || 'Unknown';
+                      const flightStr = b.outboundFlight ? `${b.outboundFlight.airline} ${b.outboundFlight.flightNumber}` : 'Unknown Flight';
+                      const dateStr = b.travelDate || (b.outboundFlight && b.outboundFlight.departureDate) || 'Unknown Date';
+                      const routeStr = b.outboundFlight ? `${b.outboundFlight.departureAirport} → ${b.outboundFlight.arrivalAirport}` : 'Unknown Route';
+                      
+                      return (
+                        <div 
+                          key={b.id}
+                          onClick={() => setCreateData({
+                            ...createData, 
+                            selectedBooking: b.refNo || b.id, 
+                            _fullBooking: { ...b, passName, flightStr, dateStr, routeStr } 
+                          })}
+                          style={{ padding: '1rem', borderBottom: '1px solid #e5e7eb', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#1f2937' }}>{b.refNo || b.id} / {b.pnr || 'N/A'}</div>
+                            <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>{passName} • {flightStr} • {dateStr}</div>
+                          </div>
+                          <button style={{ padding: '0.25rem 0.75rem', background: '#f3f4f6', border: '1px solid #d1d5db', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}>Select</button>
+                        </div>
+                      )
+                    })}
+                    {bookings.filter(b => 
+                      (b.refNo && b.refNo.toLowerCase().includes(createData.bookingSearch.toLowerCase())) ||
+                      (b.pnr && b.pnr.toLowerCase().includes(createData.bookingSearch.toLowerCase())) ||
+                      (b.passengerName && b.passengerName.toLowerCase().includes(createData.bookingSearch.toLowerCase())) ||
+                      (b.name && b.name.toLowerCase().includes(createData.bookingSearch.toLowerCase())) ||
+                      (b.phone && b.phone.includes(createData.bookingSearch))
+                    ).length === 0 && (
+                      <div style={{ padding: '1rem', textAlign: 'center', color: '#6b7280', fontSize: '0.875rem' }}>No bookings found.</div>
+                    )}
                   </div>
                 )}
                 
-                {createData.selectedBooking && (
+                {createData.selectedBooking && createData._fullBooking && (
                   <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '1rem', borderRadius: '6px', marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
                     <CheckCircle2 color="#16a34a" size={20} style={{ marginTop: '0.1rem' }} />
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, color: '#166534', marginBottom: '0.25rem' }}>Booking Selected</div>
-                      <div style={{ fontSize: '0.875rem', color: '#15803d' }}><strong>Ref:</strong> {createData.selectedBooking} | <strong>Passenger:</strong> Test Passenger</div>
+                      <div style={{ fontSize: '0.875rem', color: '#15803d' }}><strong>Ref:</strong> {createData.selectedBooking} | <strong>Passenger:</strong> {createData._fullBooking.passName}</div>
                     </div>
-                    <button onClick={() => setCreateData({...createData, selectedBooking: null})} style={{ background: 'transparent', border: 'none', color: '#16a34a', cursor: 'pointer' }}><X size={16} /></button>
+                    <button onClick={() => setCreateData({...createData, selectedBooking: null, _fullBooking: null})} style={{ background: 'transparent', border: 'none', color: '#16a34a', cursor: 'pointer' }}><X size={16} /></button>
                   </div>
                 )}
 

@@ -1,10 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plane, AlertTriangle, Calendar, Users, MapPin, Search, Filter, RefreshCw, Download, ChevronDown, Clock } from 'lucide-react';
+import { Plane, AlertTriangle, Calendar, Users, MapPin, Search, Filter, RefreshCw, Download, ChevronDown, Clock, CreditCard, Check, X } from 'lucide-react';
 import { fetchLeads } from '../services/supabase';
+import BoardingPassCharges from '../components/BoardingPassCharges';
+import { useAuth } from '../contexts/AuthContext';
 
 const BoardingPass = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const canCharge = user?.role === 'Admin' || user?.role === 'Super Admin';
   const [allLeads, setAllLeads] = useState([]);
   const [currentTime, setCurrentTime] = useState(new Date().getTime());
   
@@ -15,12 +19,20 @@ const BoardingPass = () => {
   const [customEnd, setCustomEnd] = useState('');
   const [bookingStatus, setBookingStatus] = useState('Converted'); // 'All Active', 'Converted', 'Cancelled', etc.
   const [paymentStatus, setPaymentStatus] = useState('All');
+  const [deductedCharges, setDeductedCharges] = useState(new Set());
+  const [selectedFlight, setSelectedFlight] = useState(null);
+  const resultsContainerRef = useRef(null);
 
   // Load data and set up live timer
   useEffect(() => {
     const loadLeads = async () => {
       const savedLeads = await fetchLeads();
       setAllLeads(savedLeads);
+      if (savedLeads.length > 0) {
+        // Find first flight booking to default select
+        const firstFlight = savedLeads.find(l => l.leadType === 'Flight Booking');
+        if (firstFlight) setSelectedFlight(firstFlight);
+      }
     };
     loadLeads();
 
@@ -96,6 +108,13 @@ const BoardingPass = () => {
     setCustomEnd('');
     setBookingStatus('Converted');
     setPaymentStatus('All');
+  };
+
+  const selectAndScrollToFlight = (flight) => {
+    setSelectedFlight(flight);
+    if (resultsContainerRef.current) {
+      resultsContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   const exportCSV = () => {
@@ -194,7 +213,7 @@ const BoardingPass = () => {
             <Download size={16} /> Export Results
           </button>
           <button 
-            onClick={() => navigate('/reports/create-lead')}
+            onClick={() => navigate('/bookings/create-lead')}
             style={{ padding: '10px 20px', backgroundColor: '#0f172a', color: '#ffffff', fontWeight: '600', fontSize: '13px', borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s' }}>
             Back to Dashboard
           </button>
@@ -296,8 +315,13 @@ const BoardingPass = () => {
         </div>
 
         {/* Results Area */}
-        <div style={{ flex: 1, padding: '32px', overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px' }}>
+        <div ref={resultsContainerRef} style={{ flex: 1, padding: '32px', overflowY: 'auto', scrollBehavior: 'smooth' }} className="print-area">
+          
+          {selectedFlight && (
+            <BoardingPassCharges flight={selectedFlight} />
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px' }} className="no-print">
             <div>
               <h2 style={{ margin: '0 0 4px 0', fontSize: '24px', fontWeight: '700', color: '#0f172a' }}>Search Results</h2>
               <div style={{ color: '#64748b', fontSize: '14px' }}>Found {filteredFlights.length} matching flight{filteredFlights.length !== 1 ? 's' : ''}</div>
@@ -311,7 +335,7 @@ const BoardingPass = () => {
               <p style={{ margin: 0, color: '#64748b' }}>Try adjusting your filters, changing the date range, or clicking Reset.</p>
             </div>
           ) : (
-            <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+            <div style={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)', overflow: 'hidden' }} className="no-print">
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '1000px' }}>
                   <thead>
@@ -321,6 +345,7 @@ const BoardingPass = () => {
                       <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Flight Info</th>
                       <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Route</th>
                       <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Status</th>
+                      <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', textAlign: 'center' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -329,7 +354,18 @@ const BoardingPass = () => {
                       const countdown = getTimeRemaining(flightTime, currentTime);
 
                       return (
-                        <tr key={flight.id} style={{ borderBottom: '1px solid #e2e8f0', transition: 'background-color 0.15s' }} onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f8fafc'} onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>
+                        <tr 
+                          key={flight.id} 
+                          onClick={() => selectAndScrollToFlight(flight)}
+                          style={{ 
+                            borderBottom: '1px solid #e2e8f0', 
+                            cursor: 'pointer',
+                            backgroundColor: selectedFlight?.id === flight.id ? '#eff6ff' : 'transparent',
+                            transition: 'background-color 0.15s' 
+                          }} 
+                          onMouseOver={(e) => { if (selectedFlight?.id !== flight.id) e.currentTarget.style.backgroundColor = '#f8fafc'; }} 
+                          onMouseOut={(e) => { if (selectedFlight?.id !== flight.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                        >
                           <td style={{ padding: '16px' }}>
                             <div style={{ display: 'inline-block', backgroundColor: countdown.bg, color: countdown.color, padding: '6px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: '700', border: `1px solid ${countdown.color}40` }}>
                               {countdown.text}
@@ -366,6 +402,34 @@ const BoardingPass = () => {
                               </div>
                             </div>
                           </td>
+                          <td style={{ padding: '16px', textAlign: 'center' }}>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!canCharge) {
+                                  alert('Only Admin and Super Admin Users have authority to charge.');
+                                  return;
+                                }
+                                selectAndScrollToFlight(flight);
+                              }}
+                              disabled={!canCharge}
+                              style={{ 
+                                display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', 
+                                backgroundColor: !canCharge ? '#94a3b8' : '#3b82f6', 
+                                color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', 
+                                cursor: !canCharge ? 'not-allowed' : 'pointer', 
+                                transition: 'background-color 0.2s' 
+                              }}
+                              onMouseOver={(e) => {
+                                if (canCharge) e.currentTarget.style.backgroundColor = '#2563eb';
+                              }}
+                              onMouseOut={(e) => {
+                                if (canCharge) e.currentTarget.style.backgroundColor = '#3b82f6';
+                              }}
+                            >
+                              <CreditCard size={14} /> Charge Boarding Pass
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -377,6 +441,27 @@ const BoardingPass = () => {
         </div>
 
       </div>
+
+      <style>
+        {`
+          @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+          }
+          @media print {
+            body { background: white !important; }
+            .no-print { display: none !important; }
+            header, .sidebar-filters, button { display: none !important; }
+            .print-area { padding: 0 !important; width: 100% !important; overflow: visible !important; }
+            .print-container { 
+              box-shadow: none !important; 
+              border: none !important; 
+              width: 100% !important; 
+              margin: 0 !important;
+            }
+          }
+        `}
+      </style>
     </div>
   );
 };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plane, AlertTriangle, Calendar, Users, MapPin, Search, Filter, RefreshCw, Download, ChevronDown, Clock } from 'lucide-react';
+import { Plane, AlertTriangle, Calendar, Users, MapPin, Search, Filter, RefreshCw, Download, ChevronDown, Clock, Bell, Phone, Mail, Smartphone, Check, X } from 'lucide-react';
 import { fetchLeads } from '../services/supabase';
 
 const UpcomingTrips = () => {
@@ -15,6 +15,8 @@ const UpcomingTrips = () => {
   const [customEnd, setCustomEnd] = useState('');
   const [bookingStatus, setBookingStatus] = useState('Converted'); // 'All Active', 'Converted', 'Cancelled', etc.
   const [paymentStatus, setPaymentStatus] = useState('All');
+  const [sentReminders, setSentReminders] = useState(new Set());
+  const [reminderModal, setReminderModal] = useState({ isOpen: false, flight: null });
 
   // Load data and set up live timer
   useEffect(() => {
@@ -96,6 +98,22 @@ const UpcomingTrips = () => {
     setCustomEnd('');
     setBookingStatus('Converted');
     setPaymentStatus('All');
+  };
+
+  const handleSendReminderClick = (flight) => {
+    setReminderModal({ isOpen: true, flight });
+  };
+
+  const confirmSendReminder = () => {
+    if (!reminderModal.flight) return;
+    
+    setSentReminders(prev => {
+      const next = new Set(prev);
+      next.add(reminderModal.flight.id);
+      return next;
+    });
+    
+    setReminderModal({ isOpen: false, flight: null });
   };
 
   const exportCSV = () => {
@@ -194,7 +212,7 @@ const UpcomingTrips = () => {
             <Download size={16} /> Export Results
           </button>
           <button 
-            onClick={() => navigate('/reports/create-lead')}
+            onClick={() => navigate('/bookings/create-lead')}
             style={{ padding: '10px 20px', backgroundColor: '#0f172a', color: '#ffffff', fontWeight: '600', fontSize: '13px', borderRadius: '6px', border: 'none', cursor: 'pointer', transition: 'all 0.2s' }}>
             Back to Dashboard
           </button>
@@ -318,9 +336,11 @@ const UpcomingTrips = () => {
                     <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
                       <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Time Remaining</th>
                       <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>PNR / Passenger</th>
+                      <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Contact Info</th>
                       <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Flight Info</th>
                       <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Route</th>
                       <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase' }}>Status</th>
+                      <th style={{ padding: '16px', fontSize: '12px', fontWeight: '600', color: '#64748b', textTransform: 'uppercase', textAlign: 'center' }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -341,6 +361,17 @@ const UpcomingTrips = () => {
                           <td style={{ padding: '16px' }}>
                             <div style={{ fontSize: '14px', fontWeight: '700', color: '#0f172a', marginBottom: '4px' }}>{flight.vendorId || 'TBA'}</div>
                             <div style={{ fontSize: '13px', color: '#475569', display: 'flex', alignItems: 'center', gap: '4px' }}><Users size={12} /> {flight.fullName || 'Unknown'}</div>
+                          </td>
+                          <td style={{ padding: '16px' }}>
+                            <div style={{ fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                              <Phone size={12} /> {flight.phone || 'N/A'}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                              <Mail size={12} /> {flight.email || 'N/A'}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <Smartphone size={12} /> {flight.whatsapp || flight.alternatePhone || 'N/A'} (Alt)
+                            </div>
                           </td>
                           <td style={{ padding: '16px' }}>
                             <div style={{ fontSize: '14px', fontWeight: '600', color: '#0f172a', marginBottom: '4px' }}>{flight.flightNumber || 'TBA'}</div>
@@ -366,6 +397,34 @@ const UpcomingTrips = () => {
                               </div>
                             </div>
                           </td>
+                          <td style={{ padding: '16px', textAlign: 'center' }}>
+                            <button 
+                              onClick={() => !sentReminders.has(flight.id) && handleSendReminderClick(flight)}
+                              style={{ 
+                                display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 12px', 
+                                backgroundColor: sentReminders.has(flight.id) ? '#10b981' : '#3b82f6', 
+                                color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', 
+                                cursor: sentReminders.has(flight.id) ? 'default' : 'pointer', 
+                                transition: 'background-color 0.2s' 
+                              }}
+                              onMouseOver={(e) => {
+                                if (!sentReminders.has(flight.id)) e.currentTarget.style.backgroundColor = '#2563eb';
+                              }}
+                              onMouseOut={(e) => {
+                                if (!sentReminders.has(flight.id)) e.currentTarget.style.backgroundColor = '#3b82f6';
+                              }}
+                            >
+                              {sentReminders.has(flight.id) ? (
+                                <>
+                                  <Check size={14} /> Sent
+                                </>
+                              ) : (
+                                <>
+                                  <Bell size={14} /> Send Reminder
+                                </>
+                              )}
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -377,6 +436,84 @@ const UpcomingTrips = () => {
         </div>
 
       </div>
+
+      {/* Reminder Modal Overlay */}
+      {reminderModal.isOpen && reminderModal.flight && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '20px' }}>
+          <div style={{ backgroundColor: '#ffffff', borderRadius: '16px', width: '100%', maxWidth: '420px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)', overflow: 'hidden', animation: 'fadeIn 0.2s ease-out' }}>
+            
+            {/* Modal Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#f8fafc' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: '#dbeafe', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Bell size={18} color="#2563eb" />
+                </div>
+                Send Reminder
+              </h3>
+              <button 
+                onClick={() => setReminderModal({ isOpen: false, flight: null })}
+                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', transition: 'background-color 0.2s' }}
+                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#e2e8f0'}
+                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '24px' }}>
+              <p style={{ margin: '0 0 16px 0', fontSize: '15px', color: '#334155', lineHeight: '1.5' }}>
+                Are you sure you want to send a flight reminder to <strong>{reminderModal.flight.fullName || 'Passenger'}</strong>?
+              </p>
+              
+              <div style={{ backgroundColor: '#f1f5f9', borderRadius: '8px', padding: '16px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '500' }}>Flight</span>
+                  <span style={{ fontSize: '13px', color: '#0f172a', fontWeight: '600' }}>{reminderModal.flight.flightNumber || 'TBA'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '500' }}>Route</span>
+                  <span style={{ fontSize: '13px', color: '#0f172a', fontWeight: '600' }}>{reminderModal.flight.origin || 'N/A'} → {reminderModal.flight.destination || 'N/A'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: '500' }}>Departure</span>
+                  <span style={{ fontSize: '13px', color: '#0f172a', fontWeight: '600' }}>{reminderModal.flight.departureDate} {reminderModal.flight.departureTime}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ padding: '16px 24px', backgroundColor: '#f8fafc', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <button 
+                onClick={() => setReminderModal({ isOpen: false, flight: null })}
+                style={{ padding: '10px 16px', backgroundColor: 'white', border: '1px solid #cbd5e1', borderRadius: '8px', color: '#475569', fontSize: '14px', fontWeight: '600', cursor: 'pointer', transition: 'all 0.2s' }}
+                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f1f5f9'}
+                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'white'}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmSendReminder}
+                style={{ padding: '10px 20px', backgroundColor: '#2563eb', border: 'none', borderRadius: '8px', color: 'white', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', transition: 'all 0.2s', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)' }}
+                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#1d4ed8'}
+                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
+              >
+                <Bell size={16} /> Confirm Send
+              </button>
+            </div>
+            
+          </div>
+        </div>
+      )}
+
+      <style>
+        {`
+          @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+          }
+        `}
+      </style>
     </div>
   );
 };

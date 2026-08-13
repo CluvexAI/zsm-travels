@@ -41,7 +41,7 @@ const CustomerDirectory = () => {
         </div>
         <nav style={{ display: 'flex', gap: '24px' }}>
           <a href="#" onClick={(e) => { e.preventDefault(); navigate('/dashboard'); }} style={{ color: '#64748b', textDecoration: 'none', fontSize: '14px', fontWeight: '500' }}>Dashboard</a>
-          <a href="#" onClick={(e) => { e.preventDefault(); navigate('/reports/create-lead'); }} style={{ color: '#64748b', textDecoration: 'none', fontSize: '14px', fontWeight: '500' }}>Create Lead</a>
+          <a href="#" onClick={(e) => { e.preventDefault(); navigate('/bookings/create-lead'); }} style={{ color: '#64748b', textDecoration: 'none', fontSize: '14px', fontWeight: '500' }}>Create Lead</a>
           <a href="#" onClick={(e) => { e.preventDefault(); navigate('/customer-directory'); }} style={{ color: '#005ed3', textDecoration: 'none', fontSize: '14px', fontWeight: '600' }}>Customer Directory</a>
         </nav>
       </header>

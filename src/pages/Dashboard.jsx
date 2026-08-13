@@ -1,24 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer
 } from 'recharts';
 import { Bell } from 'lucide-react';
 import { usePermissions } from '../hooks/usePermissions';
-import { fetchLeads } from '../services/supabase';
+import { fetchLeads, fetchBookings } from '../services/supabase';
 
-const getKpiData = (canViewActualCost) => {
+const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+
+const getKpiData = (canViewActualCost, metrics) => {
   const data = [
-    { title: 'Total MCO', value: '$457,268.95' },
-    { title: 'Total Charged', value: '$345,097.49' },
-    { title: 'Total Chargeback', value: '$2,575.94' },
-    { title: 'Total Cancelled', value: '0' },
-    { title: 'Total Refund', value: '0' },
-    { title: 'Total Partial Refund', value: '$4,003.99' },
+    { title: 'Total MCO', value: formatCurrency(metrics.totalMCO) },
+    { title: 'Total Charged', value: formatCurrency(metrics.totalCharged) },
+    { title: 'Total Chargeback', value: formatCurrency(metrics.totalChargeback) },
+    { title: 'Total Cancelled', value: String(metrics.totalCancelled) },
+    { title: 'Total Refund', value: formatCurrency(metrics.totalRefund) },
+    { title: 'Total Partial Refund', value: formatCurrency(metrics.totalPartialRefund) },
   ];
 
   if (canViewActualCost) {
-    data.push({ title: 'Actual Airline Cost', value: '$210,400.00' });
+    data.push({ title: 'Actual Airline Cost', value: formatCurrency(metrics.actualCost) });
   }
   return data;
 };
@@ -43,19 +45,75 @@ const Dashboard = () => {
     agent: '', altPhone: '', passengerName: '', fromDate: '', toDate: '', status: ''
   });
   const [recentLeads, setRecentLeads] = useState([]);
+  const [metrics, setMetrics] = useState({
+    totalMCO: 0,
+    totalCharged: 0,
+    totalChargeback: 0,
+    totalCancelled: 0,
+    totalRefund: 0,
+    totalPartialRefund: 0,
+    actualCost: 0
+  });
 
   const canViewActualCost = hasPermission('Actual Cost', 'View');
   const canViewReports    = hasPermission('Reports', 'View');
   const canViewPayments   = hasPermission('Payments', 'View');
-  const kpiData = getKpiData(canViewActualCost);
+  const kpiData = getKpiData(canViewActualCost, metrics);
 
-  React.useEffect(() => {
-    const loadLeads = async () => {
-      const savedLeads = await fetchLeads();
-      savedLeads.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      setRecentLeads(savedLeads.slice(0, 5));
+  useEffect(() => {
+    const loadData = async () => {
+      const [savedLeads, savedBookings] = await Promise.all([
+        fetchLeads(),
+        fetchBookings()
+      ]);
+      
+      if (savedLeads) {
+        savedLeads.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        setRecentLeads(savedLeads.slice(0, 5));
+      }
+
+      if (savedBookings) {
+        let mco = 0;
+        let charged = 0;
+        let chargeback = 0;
+        let cancelled = 0;
+        let refund = 0;
+        let partialRefund = 0;
+        let cost = 0;
+
+        savedBookings.forEach(b => {
+          const amt = parseFloat(String(b.amount || '0').replace(/[^0-9.-]+/g,"")) || 0;
+          
+          if (b.status === 'Cancelled') {
+            cancelled++;
+          } else if (b.status === 'Refunded') {
+            refund += amt;
+          } else if (b.status === 'Partial Refund') {
+            partialRefund += amt;
+          } else {
+            charged += amt;
+          }
+
+          if (b.cbStatus === 'Chargeback') {
+            chargeback += amt;
+          }
+
+          mco += parseFloat(b.customActualMCO || b.actualMCO || b.mco || 0);
+          cost += parseFloat(b.customActualCost || b.actualCost || b.airlineCost || 0);
+        });
+
+        setMetrics({
+          totalMCO: mco,
+          totalCharged: charged,
+          totalChargeback: chargeback,
+          totalCancelled: cancelled,
+          totalRefund: refund,
+          totalPartialRefund: partialRefund,
+          actualCost: cost
+        });
+      }
     };
-    loadLeads();
+    loadData();
   }, []);
 
   const handleSearch = (e) => {

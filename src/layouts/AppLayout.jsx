@@ -40,13 +40,6 @@ const AppLayout = () => {
     hasPermission('Audit Logs', 'View') // catches 'All' scope via the normal path
   );
 
-  // Split booking features into columns of max 5
-  const bookingCols = [];
-  const colSize = 5;
-  for (let i = 0; i < bookingFeatures.length; i += colSize) {
-    bookingCols.push(bookingFeatures.slice(i, i + colSize));
-  }
-
   const dotIcon = (
     <div style={{ width: '6px', height: '6px', borderRadius: '50%', border: '1px solid currentColor', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
       <div style={{ width: '2px', height: '2px', backgroundColor: 'currentColor', borderRadius: '50%' }} />
@@ -68,17 +61,21 @@ const AppLayout = () => {
               <Home size={16} />
             </Link>
 
-            {/* ── Booking Mega-Menu — only rendered if user can access ≥1 booking feature */}
+            {/* ── Bookings Mega-Menu — only rendered if user can access ≥1 booking feature */}
             {bookingFeatures.length > 0 && (
               <div className="nav-item">
                 <span className="flex items-center gap-2">
-                  <PlaneTakeoff size={16} /> Booking <ChevronDown size={14} />
+                  <PlaneTakeoff size={16} /> Bookings <ChevronDown size={14} />
                 </span>
-                
-                <div className="mega-menu">
-                  {bookingCols.map((col, colIdx) => (
-                    <div key={colIdx} className="flex-col gap-2">
-                      {col.map((feat) => (
+
+                <div className="mega-menu" style={{ minWidth: '200px', gridTemplateColumns: '1fr' }}>
+                  <div className="mega-menu-submenu">
+                    <div className="mega-menu-trigger">
+                      Flight <ChevronDown size={12} style={{ transform: 'rotate(-90deg)' }} />
+                    </div>
+
+                    <div className="mega-menu-flyout">
+                      {bookingFeatures.map((feat) => (
                         <Link
                           key={feat.key}
                           to={feat.path}
@@ -89,7 +86,7 @@ const AppLayout = () => {
                         </Link>
                       ))}
                     </div>
-                  ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -135,18 +132,7 @@ const AppLayout = () => {
               <div style={{ color: '#94a3b8' }}>{user?.role}</div>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginRight: '1rem', borderRight: '1px solid #e2e8f0', paddingRight: '1rem' }}>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Switch:</span>
-            <select 
-              value={user?.userId || ''} 
-              onChange={(e) => switchUser(e.target.value)}
-              style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontWeight: 600, color: '#475569', cursor: 'pointer' }}
-            >
-              {MOCK_USERS.map(u => (
-                <option key={u.userId} value={u.userId}>{u.role}</option>
-              ))}
-            </select>
-          </div>
+
           <div className="topbar-icon">
             <Mail size={18} />
           </div>
@@ -176,13 +162,8 @@ const AppLayout = () => {
       </main>
 
       {/* Footer */}
-      <footer className="footer" style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)', fontSize: '0.875rem', borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-secondary)' }}>
-        <p>
-          All Copyright {new Date().getFullYear()} Reserved by{' '}
-          <a href="https://zsmeservices.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-color)', textDecoration: 'none' }}>
-            ZSM eServices Pvt Ltd.
-          </a>
-        </p>
+      <footer className="footer" style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: '600', borderTop: '1px solid var(--border-color)', backgroundColor: '#ffffff' }}>
+        <p style={{ margin: 0 }}>Copyright @2026 ZSM eServices Pvt. Ltd.</p>
       </footer>
     </div>
   );

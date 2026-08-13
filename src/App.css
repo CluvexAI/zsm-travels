@@ -105,6 +105,55 @@
   color: var(--primary-accent);
 }
 
+/* Nested flyout submenu (e.g. Bookings > Flight > items) */
+.mega-menu-submenu {
+  position: relative;
+}
+
+.mega-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-light);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.375rem 0;
+  cursor: pointer;
+  opacity: 0.9;
+}
+
+.mega-menu-submenu:hover > .mega-menu-trigger {
+  opacity: 1;
+  color: var(--primary-accent);
+}
+
+.mega-menu-flyout {
+  position: absolute;
+  top: -1rem;
+  left: 100%;
+  margin-left: 0.75rem;
+  background-color: var(--bg-dropdown);
+  min-width: 260px;
+  padding: 1rem 1.25rem;
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(10px);
+  transition: all 0.2s ease;
+  z-index: 101;
+}
+
+.mega-menu-submenu:hover .mega-menu-flyout {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(0);
+}
+
 .topbar-right {
   display: flex;
   align-items: center;
