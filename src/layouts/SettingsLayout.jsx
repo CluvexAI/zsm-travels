@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, Navigate } from 'react-router-dom';
-import { Users, Shield, Server, Settings } from 'lucide-react';
+import { Users, Shield, Server, Settings, Mail } from 'lucide-react';
 import { usePermissions } from '../hooks/usePermissions';
 
 const SettingsLayout = () => {
@@ -10,8 +10,9 @@ const SettingsLayout = () => {
   const canViewUsers = hasPermission('Users', 'View');
   const canViewRoles = hasPermission('Roles & Permissions', 'View');
   const canViewAudits = hasPermission('Audit Logs', 'View');
+  const canManageSmtp = hasPermission('System Settings', 'Manage');
 
-  if (!canViewUsers && !canViewRoles && !canViewAudits) {
+  if (!canViewUsers && !canViewRoles && !canViewAudits && !canManageSmtp) {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -53,6 +54,12 @@ const SettingsLayout = () => {
           {canViewAudits && (
             <NavLink to="/admin/audit-logs" style={navLinkStyle}>
               <Server size={18} /> Audit Logs
+            </NavLink>
+          )}
+
+          {canManageSmtp && (
+            <NavLink to="/admin/smtp-settings" style={navLinkStyle}>
+              <Mail size={18} /> SMTP Settings
             </NavLink>
           )}
         </nav>

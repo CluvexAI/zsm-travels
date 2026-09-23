@@ -32,6 +32,7 @@ import LoginPage from './pages/LoginPage';
 import UserManagement from './pages/UserManagement';
 import AuditLogsPage from './pages/AuditLogsPage';
 import RolesPermissions from './pages/RolesPermissions';
+import SmtpSettings from './pages/SmtpSettings';
 import UnauthorizedPage from './pages/UnauthorizedPage';
 import SettingsLayout from './layouts/SettingsLayout';
 import { useAuth } from './contexts/AuthContext';
@@ -201,6 +202,11 @@ function AppRoutes() {
             <Route path="audit-logs" element={
               <ProtectedRoute featureKey="audit-logs">
                 <AuditLogsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="smtp-settings" element={
+              <ProtectedRoute featureKey="smtp-settings">
+                <SmtpSettings />
               </ProtectedRoute>
             } />
           </Route>

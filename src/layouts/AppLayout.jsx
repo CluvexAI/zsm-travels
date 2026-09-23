@@ -133,9 +133,11 @@ const AppLayout = () => {
             </div>
           </div>
 
-          <div className="topbar-icon">
-            <Mail size={18} />
-          </div>
+          {hasPermission('System Settings', 'Manage') && (
+            <Link to="/admin/smtp-settings" className="topbar-icon" title="SMTP Settings" style={{ display: 'flex', textDecoration: 'none' }}>
+              <Mail size={18} />
+            </Link>
+          )}
           <div className="topbar-icon">
             <MessageCircle size={18} />
           </div>

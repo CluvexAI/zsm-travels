@@ -362,6 +362,7 @@ export const FEATURE_PERMISSION_MAP = {
   'user-management':      { module: 'Users',               action: 'View',   label: 'User Management',     path: '/admin/user-management',   category: 'admin' },
   'roles-permissions':    { module: 'Roles & Permissions', action: 'View',   label: 'Roles & Permissions', path: '/admin/roles-permissions', category: 'admin' },
   'audit-logs':           { module: 'Audit Logs',          action: 'View',   label: 'Audit Logs',          path: '/admin/audit-logs',        category: 'admin' },
+  'smtp-settings':        { module: 'System Settings',     action: 'Manage', label: 'SMTP Settings',       path: '/admin/smtp-settings',     category: 'admin' },
 };
 
 export const MOCK_USERS = [
