@@ -1,0 +1,7 @@
+Departure Airport: JKF     -     
+Arrival Airport: MIA
+Departure Time:
+Arrival Time:
+Flight Number:
+Class of Service:
+Carrier:

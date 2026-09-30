@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, ChevronLeft, Check, CreditCard, User, Plane, DollarSign, Search, ShieldAlert, PlaneTakeoff, PlaneLanding, Clock, Loader2, X, Plus, Minus, Download, ExternalLink, Home, Info, Mail, Send, CheckCircle2, Copy } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import { getMetadata, setMetadata, saveBookings, fetchBookings } from '../services/supabase';
 import { isSabreConfigured, lookupSabreFlight } from '../services/sabre';
-import { buildAuthorizationMailto, buildAuthorizationEmail } from '../utils/authorizationEmailTemplate';
+import { buildAuthorizationEmail } from '../utils/authorizationEmailTemplate';
+import { sendSmtpEmail } from '../services/mailer';
 
 const steps = [
   { id: 1, title: 'Passenger & Payment', icon: <User size={18} /> },
@@ -15,6 +16,65 @@ const steps = [
 
 const vendorCodeOptions = ['VND-001', 'VND-002', 'VND-003'];
 const descriptorOptions = ['01', '02'];
+
+const createDefaultFormData = () => ({
+  passengersCount: 1,
+  outboundFlight: null,
+  inboundFlight: null,
+  fromAirport: 'JFK',
+  toAirport: 'LAX',
+  passengers: [{ title: 'Mr', passengerType: 'Adult', firstName: '', middleName: '', lastName: '', dob: '', gender: 'Male', phoneCode: '+1', phone: '', altPhoneCode: '+1', altPhone: '', email: '', eTicket: '', carryOn: '1 Bag (Included)', checkInBag: 'None', insurance: 'None' }],
+  paymentMethod: 'Customer Card',
+  cardNumber: '',
+  expiryDate: '',
+  cvv: '',
+  paymentAgreed: false,
+  customFare: null,
+  customTaxes: null,
+  customServiceFee: null,
+  customActualCost: null,
+  customActualMCO: null,
+  merchantName: '',
+  vendorCode: '',
+  descriptor: '',
+  bookingSource: '',
+  shift: '',
+  proposalType: '',
+  cardName: '',
+  billingAddressLine1: '',
+  billingAddressLine2: '',
+  billingCity: '',
+  billingState: '',
+  billingZip: '',
+  billingCountry: 'United States',
+  billingPhone: '',
+  billingEmail: '',
+  remark: '',
+  itineraryDetails: null,
+});
+
+const createDefaultAirlinePnrs = () => [
+  { airline: '', pnr: '', status: 'On Hold' },
+  { airline: '', pnr: '', status: 'On Hold' },
+  { airline: '', pnr: '', status: 'On Hold' },
+];
+
+// Everything typed on /new-booking, so the form can be restored after reload.
+const buildBookingDraft = (state, overrides = {}) => ({
+  currentStep: state.currentStep,
+  returnStep: state.returnStep,
+  tripType: state.tripType,
+  formData: state.formData,
+  authEmailSentAt: state.authEmailSentAt,
+  flightCodeInput: state.flightCodeInput,
+  flightLookupResult: state.flightLookupResult,
+  flightDetailEdits: state.flightDetailEdits,
+  airlinePnrs: state.airlinePnrs,
+  itineraryDraft: state.itineraryDraft,
+  itineraryModalType: state.itineraryModalType,
+  savedBooking: state.savedBooking,
+  ...overrides,
+});
 
 const AIRLINE_NAMES = {
   AA: 'American Airlines', DL: 'Delta Air Lines', UA: 'United Airlines', B6: 'JetBlue Airways',
@@ -89,13 +149,185 @@ const mockFlights = [
   { id: 'UA415', airlineCode: 'UA', flightNumber: '415', flightCode: 'UA415', airline: 'United Airlines', color: '#002244', route: 'LAX', dest: 'JFK', origin: 'LAX', destination: 'JFK', departureAirport: 'LAX', arrivalAirport: 'JFK', date: 'Oct 22, 2026', time: '10:30 PM', arrTime: '06:45 AM', duration: '5h 15m', stops: 'Non-stop', baggage: '1 Checked Bag', fareClass: 'Economy', price: 310.00, isBestValue: false },
 ];
 
+// ─── Flight details mapping layer ────────────────────────────────────────────
+// Maps whatever shape the selected flight/segment arrives in (local mock, Sabre
+// extractSegment, or the VITE_PNR_API_URL proxy) onto the seven display fields.
+const FLIGHT_DETAIL_FIELDS = [
+  { key: 'departureAirport', label: 'Departure Airport' },
+  { key: 'arrivalAirport', label: 'Arrival Airport' },
+  { key: 'departureTime', label: 'Departure Time' },
+  { key: 'arrivalTime', label: 'Arrival Time' },
+  { key: 'flightNumber', label: 'Flight Number' },
+  { key: 'classOfService', label: 'Class of Service' },
+  { key: 'carrier', label: 'Carrier' },
+];
+
+const DASH = '-';
+
+const flattenValue = (value) => {
+  if (value === null || value === undefined) return undefined;
+  if (value instanceof Date) return value;
+  if (typeof value === 'object') {
+    return pickValue(
+      value.Code, value.code, value.CompanyCode, value.companyCode,
+      value.LocationCode, value.locationCode, value.Name, value.name,
+      value.FlightNumber, value.flightNumber, value.value, value.Value
+    );
+  }
+  return value;
+};
+
+const pickValue = (...values) => {
+  for (const raw of values) {
+    const value = flattenValue(raw);
+    if (value !== undefined && String(value).trim() !== '') return value;
+  }
+  return undefined;
+};
+
+const toDisplay = (value) => {
+  const flattened = flattenValue(value);
+  if (flattened === undefined || flattened === null) return DASH;
+  if (flattened instanceof Date) {
+    return Number.isNaN(flattened.getTime()) ? DASH : flattened.toLocaleString('en-US');
+  }
+  const text = String(flattened).trim();
+  if (!text) return DASH;
+  const normalized = text.toLowerCase();
+  if (['-', '—', '–', 'null', 'undefined', 'n/a', 'na', 'nan', 'none', 'unknown'].includes(normalized)) return DASH;
+  return text;
+};
+
+const formatTimeValue = (raw) => {
+  const value = pickValue(raw);
+  if (value === undefined) return undefined;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? undefined : value.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  }
+  const text = String(value).trim();
+  if (!text) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}/.test(text)) {
+    const parsed = new Date(text.replace(' ', 'T'));
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    }
+  }
+  return text;
+};
+
+const resolveCarrierName = (name, code) => {
+  const carrierName = String(pickValue(name) ?? '').trim();
+  const carrierCode = String(pickValue(code) ?? '').trim().toUpperCase();
+  const looksLikeCode = (v) => /^[A-Z0-9]{2,3}$/i.test(v);
+  if (carrierName && carrierName.toUpperCase() !== carrierCode && !looksLikeCode(carrierName)) return carrierName;
+  const fallback = carrierCode || carrierName.toUpperCase();
+  if (!fallback) return '';
+  return AIRLINE_NAMES[fallback.toUpperCase()] || fallback.toUpperCase();
+};
+
+const mapSegmentFields = (source) => {
+  if (!source || typeof source !== 'object') return {};
+  const departure = typeof source.departure === 'object' && source.departure ? source.departure : {};
+  const arrival = typeof source.arrival === 'object' && source.arrival ? source.arrival : {};
+  const codeForNumber = String(pickValue(source.marketingCode, source.airlineCode, source.carrierCode) ?? '').trim();
+  const rawFlightNumber = pickValue(source.flightNumber, source.flightNo, source.marketingFlightNumber, departure.flightNumber);
+  const digitsOnly = rawFlightNumber !== undefined ? String(rawFlightNumber).replace(/\D/g, '') : '';
+  const flightNumber = pickValue(
+    source.flightCode,
+    rawFlightNumber !== undefined && /[A-Za-z]/.test(String(rawFlightNumber)) ? String(rawFlightNumber) : undefined,
+    codeForNumber && digitsOnly ? `${codeForNumber}${digitsOnly}` : undefined,
+    rawFlightNumber
+  );
+  return {
+    departureAirport: pickValue(
+      source.departureAirport, source.departureAirportCode, source.origin, source.originAirport,
+      departure.airport, departure.airportCode, departure.locationCode, departure.LocationCode,
+      source.route, source.from, source.fromAirport
+    ),
+    arrivalAirport: pickValue(
+      source.arrivalAirport, source.arrivalAirportCode, source.destination, source.destinationAirport,
+      arrival.airport, arrival.airportCode, arrival.locationCode, arrival.LocationCode,
+      source.dest, source.to, source.toAirport
+    ),
+    departureTime: formatTimeValue(pickValue(
+      source.departureTime, source.departureDateTime, source.depTime,
+      departure.time, departure.dateTime, departure.at, departure.departureTime
+    )),
+    arrivalTime: formatTimeValue(pickValue(
+      source.arrivalTime, source.arrivalDateTime, source.arrTime,
+      arrival.time, arrival.dateTime, arrival.at, arrival.arrivalTime
+    )),
+    flightNumber,
+    classOfService: pickValue(
+      source.classOfService, source.classOfServiceCode, source.cabinClass, source.cabin,
+      source.fareClass, source.bookingClass, source.serviceClass, source.rbd
+    ),
+    carrier: resolveCarrierName(
+      pickValue(
+        source.carrier, source.carrierName, source.airline, source.airlineName,
+        source.marketingCarrierName, source.operatingCarrierName, source.marketingCarrier,
+        source.operatingAirline
+      ),
+      pickValue(source.airlineCode, source.carrierCode, source.marketingCode, source.operatingAirlineCode, source.marketingAirlineCode)
+    ),
+  };
+};
+
+const FlightDetailsCard = ({ title, badge, loading, segments, edits, onChange }) => {
+  const blocks = segments && segments.length ? segments : [mapSegmentFields({})];
+  const valueFor = (fields, segIdx, key) => {
+    const overrides = edits && edits[segIdx];
+    if (overrides && Object.prototype.hasOwnProperty.call(overrides, key)) return overrides[key];
+    const base = toDisplay(fields ? fields[key] : undefined);
+    return base === DASH ? '' : base;
+  };
+  return (
+    <div className="flight-details-card" role="group" aria-label={badge ? `${title} — ${badge}` : title}>
+      <div className="flight-details-head">
+        <span className="flight-details-title">{title}</span>
+        {badge ? <span className="flight-details-badge">{badge}</span> : null}
+      </div>
+      {loading ? (
+        <div className="flight-details-loading" aria-live="polite">
+          <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+          Loading flight information...
+        </div>
+      ) : (
+        blocks.map((fields, segIdx) => (
+          <div key={segIdx}>
+            {blocks.length > 1 && <div className="flight-segment-title">Flight Segment {segIdx + 1}</div>}
+            <div className="flight-details-grid">
+              {FLIGHT_DETAIL_FIELDS.map(field => (
+                <div key={field.key} className="flight-detail-item">
+                  <span>{field.label}</span>
+                  <input
+                    type="text"
+                    className="flight-detail-input"
+                    value={valueFor(fields, segIdx, field.key)}
+                    placeholder={DASH}
+                    aria-label={`${field.label}${badge ? ` — ${badge}` : ''}${blocks.length > 1 ? ` — Segment ${segIdx + 1}` : ''}`}
+                    onChange={e => onChange(segIdx, field.key, e.target.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+};
+
 const NewBooking = () => {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [returnStep, setReturnStep] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [savedBookingId, setSavedBookingId] = useState(null);
+  // Details of the booking created on submit — persisted with the draft so the
+  // confirmation screen survives a reload.
+  const [savedBooking, setSavedBooking] = useState(null);
   const [authEmailSentAt, setAuthEmailSentAt] = useState(null);
+  const [sendingAuthEmail, setSendingAuthEmail] = useState(false);
   const [htmlCopied, setHtmlCopied] = useState(false);
   const [tripType, setTripType] = useState('Round Trip');
   const [flightCodeInput, setFlightCodeInput] = useState({ outbound: '', return: '' });
@@ -103,6 +335,30 @@ const NewBooking = () => {
   const [flightLookupError, setFlightLookupError] = useState({ outbound: '', return: '' });
   const [isLookingUp, setIsLookingUp] = useState({ outbound: false, return: false });
   const [flightCodeOpen, setFlightCodeOpen] = useState({ outbound: false, return: false });
+  // Manual overrides for the seven Flight Details fields, keyed by detail block
+  // then segment index: { [blockKey]: { [segIdx]: { fieldKey: value } } }.
+  const [flightDetailEdits, setFlightDetailEdits] = useState({});
+
+  const updateFlightDetailEdit = (blockKey, segIdx, fieldKey, value) => {
+    setFlightDetailEdits(prev => ({
+      ...prev,
+      [blockKey]: {
+        ...(prev[blockKey] || {}),
+        [segIdx]: { ...((prev[blockKey] || {})[segIdx] || {}), [fieldKey]: value },
+      },
+    }));
+  };
+
+  const applyFlightDetailEdits = (blockKey, segments) =>
+    (segments || []).map((fields, segIdx) => {
+      const overrides = flightDetailEdits[blockKey] && flightDetailEdits[blockKey][segIdx];
+      const merged = overrides ? { ...fields, ...overrides } : { ...fields };
+      FLIGHT_DETAIL_FIELDS.forEach(({ key }) => {
+        const text = toDisplay(merged[key]);
+        merged[key] = text === DASH ? '' : text;
+      });
+      return merged;
+    });
 
   const getFlightSuggestions = (type) => {
     const q = (flightCodeInput[type] || '').trim().toUpperCase();
@@ -202,11 +458,7 @@ const NewBooking = () => {
     }
     openItineraryModal(type);
   };
-  const [airlinePnrs, setAirlinePnrs] = useState([
-    { airline: '', pnr: '', status: 'On Hold' },
-    { airline: '', pnr: '', status: 'On Hold' },
-    { airline: '', pnr: '', status: 'On Hold' },
-  ]);
+  const [airlinePnrs, setAirlinePnrs] = useState(createDefaultAirlinePnrs());
 
   const updateAirlinePnr = (idx, field, value) => {
     setAirlinePnrs(prev => prev.map((row, i) => i === idx ? { ...row, [field]: value } : row));
@@ -316,51 +568,50 @@ const NewBooking = () => {
     if (type === 'return') setFormData(prev => ({ ...prev, inboundFlight: null }));
   };
   
-  const [formData, setFormData] = useState({
-      passengersCount: 1,
-      outboundFlight: null,
-      inboundFlight: null,
-      fromAirport: 'JFK',
-      toAirport: 'LAX',
-      passengers: [{ title: 'Mr', passengerType: 'Adult', firstName: '', middleName: '', lastName: '', dob: '', gender: 'Male', phoneCode: '+1', phone: '', altPhoneCode: '+1', altPhone: '', email: '', eTicket: '', carryOn: '1 Bag (Included)', checkInBag: 'None', insurance: 'None' }],
-      paymentMethod: 'Customer Card',
-      cardNumber: '',
-      expiryDate: '',
-      cvv: '',
-      paymentAgreed: false,
-      customFare: null,
-      customTaxes: null,
-      customServiceFee: null,
-      customActualCost: null,
-      customActualMCO: null,
-      merchantName: '',
-      vendorCode: '',
-      descriptor: '',
-      bookingSource: '',
-      shift: '',
-      proposalType: '',
-      cardName: '',
-      billingAddressLine1: '',
-      billingAddressLine2: '',
-      billingCity: '',
-      billingState: '',
-      billingZip: '',
-      billingCountry: 'United States',
-      billingPhone: '',
-      billingEmail: '',
-      remark: ''
+  const [formData, setFormData] = useState(createDefaultFormData());
+
+  // Every piece of state entered on this page is kept in one draft object so
+  // nothing is lost on reload. The first render only reads — it never writes,
+  // otherwise it would clobber the stored draft before it has been loaded.
+  const draftLoadedRef = useRef(false);
+
+  const collectDraftState = () => ({
+    currentStep,
+    returnStep,
+    tripType,
+    formData,
+    authEmailSentAt,
+    flightCodeInput,
+    flightLookupResult,
+    flightDetailEdits,
+    airlinePnrs,
+    itineraryDraft,
+    itineraryModalType,
+    savedBooking,
   });
 
   useEffect(() => {
     const loadDraft = async () => {
-      const saved = await getMetadata('newBookingDraft');
-      if (saved) {
-        if (saved.currentStep) setCurrentStep(Math.min(saved.currentStep, steps.length));
-        if (saved.tripType) setTripType(saved.tripType);
-        if (saved.formData) setFormData(saved.formData);
-        if (saved.authEmailSentAt) setAuthEmailSentAt(saved.authEmailSentAt);
-        if (saved.flightCodeInput) setFlightCodeInput(saved.flightCodeInput);
-        if (saved.flightLookupResult) setFlightLookupResult(saved.flightLookupResult);
+      try {
+        const saved = await getMetadata('newBookingDraft');
+        if (saved) {
+          if (saved.currentStep) setCurrentStep(Math.min(saved.currentStep, steps.length));
+          if (saved.returnStep) setReturnStep(saved.returnStep);
+          if (saved.tripType) setTripType(saved.tripType);
+          if (saved.formData) setFormData({ ...createDefaultFormData(), ...saved.formData });
+          if (saved.authEmailSentAt) setAuthEmailSentAt(saved.authEmailSentAt);
+          if (saved.flightCodeInput) setFlightCodeInput(saved.flightCodeInput);
+          if (saved.flightLookupResult) setFlightLookupResult(saved.flightLookupResult);
+          if (saved.flightDetailEdits) setFlightDetailEdits(saved.flightDetailEdits);
+          if (Array.isArray(saved.airlinePnrs) && saved.airlinePnrs.length) setAirlinePnrs(saved.airlinePnrs);
+          if (saved.itineraryDraft) setItineraryDraft(saved.itineraryDraft);
+          if (saved.itineraryModalType) setItineraryModalType(saved.itineraryModalType);
+          if (saved.savedBooking) setSavedBooking(saved.savedBooking);
+        }
+      } catch (err) {
+        console.error('Failed to load booking draft:', err);
+      } finally {
+        draftLoadedRef.current = true;
       }
     };
     loadDraft();
@@ -371,8 +622,22 @@ const NewBooking = () => {
 
   // Auto-save to Supabase
   useEffect(() => {
-    setMetadata('newBookingDraft', { currentStep, tripType, formData, authEmailSentAt, flightCodeInput, flightLookupResult });
-  }, [currentStep, tripType, formData, authEmailSentAt, flightCodeInput, flightLookupResult]);
+    if (!draftLoadedRef.current) return;
+    setMetadata('newBookingDraft', buildBookingDraft({
+      currentStep,
+      returnStep,
+      tripType,
+      formData,
+      authEmailSentAt,
+      flightCodeInput,
+      flightLookupResult,
+      flightDetailEdits,
+      airlinePnrs,
+      itineraryDraft,
+      itineraryModalType,
+      savedBooking,
+    }));
+  }, [currentStep, returnStep, tripType, formData, authEmailSentAt, flightCodeInput, flightLookupResult, flightDetailEdits, airlinePnrs, itineraryDraft, itineraryModalType, savedBooking]);
 
   // -- Credit Card Helpers --
   const luhnCheck = (num) => {
@@ -492,11 +757,13 @@ const NewBooking = () => {
       setIsSaving(true);
       try {
         const bookingId = `BK-${Date.now()}`;
+        const customerId = `C-${String(Date.now()).slice(-5)}`;
         const pnr = `PNR-${Math.random().toString(36).toUpperCase().slice(2, 8)}`;
         const now = new Date().toISOString();
 
         const booking = {
           id: bookingId,
+          customerId,
           pnr,
           status: 'Confirmed',
           createdAt: now,
@@ -549,6 +816,14 @@ const NewBooking = () => {
             price: formData.inboundFlight.price,
           } : null,
 
+          // Flight Details blocks (seven fields per segment, with manual edits applied)
+          flightDetails: [...outboundDetailBlocks, ...inboundDetailBlocks].map(block => ({
+            key: block.key,
+            title: block.title,
+            badge: block.badge || null,
+            segments: applyFlightDetailEdits(block.key, block.segments),
+          })),
+
           // Passengers
           passengers: formData.passengers.map((p, i) => ({
             index: i + 1,
@@ -593,6 +868,31 @@ const NewBooking = () => {
           // Agency / merchant
           merchantName: formData.merchantName,
           vendorCode: formData.vendorCode,
+          descriptor: formData.descriptor || '',
+          bookingSource: formData.bookingSource || '',
+          shift: formData.shift || '',
+          proposalType: formData.proposalType || '',
+
+          // Airline & PNR rows (entered on this form)
+          airlinePnrs: airlinePnrs
+            .filter(row => filled(row.airline) || filled(row.pnr))
+            .map(row => ({ airline: row.airline || '', pnr: row.pnr || '', status: row.status || 'On Hold' })),
+
+          // Itinerary details captured in the fare/itinerary modal
+          itineraryDetails: formData.itineraryDetails || null,
+
+          // Billing
+          billing: {
+            name: formData.cardName || '',
+            addressLine1: formData.billingAddressLine1 || '',
+            addressLine2: formData.billingAddressLine2 || '',
+            city: formData.billingCity || '',
+            state: formData.billingState || '',
+            zip: formData.billingZip || '',
+            country: formData.billingCountry || '',
+            phone: formData.billingPhone || '',
+            email: formData.billingEmail || '',
+          },
 
           // Remark
           remark: formData.remark || '',
@@ -603,12 +903,16 @@ const NewBooking = () => {
         const existing = await fetchBookings() || [];
         await saveBookings([...existing, booking]);
 
-        // Clear the auto-save draft
-        await setMetadata('newBookingDraft', null);
-        setAuthEmailSentAt(null);
-
-        setSavedBookingId(bookingId);
+        // Keep the draft, but mark it as completed — reloading /new-booking
+        // reopens this confirmation instead of an empty form.
+        const completedBooking = { id: bookingId, customerId, pnr, createdAt: now };
+        setSavedBooking(completedBooking);
         setCurrentStep(4);
+        await setMetadata('newBookingDraft', buildBookingDraft(collectDraftState(), {
+          currentStep: 4,
+          returnStep: null,
+          savedBooking: completedBooking,
+        }));
       } catch (err) {
         console.error('Failed to save booking:', err);
         // Still advance even if save fails — user sees confirmation
@@ -630,15 +934,44 @@ const NewBooking = () => {
     setCurrentStep(prev => Math.max(prev - 1, 1));
   };
 
+  // Reset every field so a fresh reservation can be started; the auto-save
+  // effect then overwrites the stored draft with this empty state.
+  const startNewBooking = () => {
+    setSavedBooking(null);
+    setAuthEmailSentAt(null);
+    setTripType('Round Trip');
+    setReturnStep(null);
+    setFormData(createDefaultFormData());
+    setAirlinePnrs(createDefaultAirlinePnrs());
+    setFlightDetailEdits({});
+    setFlightCodeInput({ outbound: '', return: '' });
+    setFlightLookupResult({ outbound: null, return: null });
+    setFlightLookupError({ outbound: '', return: '' });
+    setFlightCodeOpen({ outbound: false, return: false });
+    setItineraryModalType(null);
+    setItineraryDraft(defaultItineraryDetails());
+    setCardErrors({ cardNumber: '', expiryDate: '', cvv: '' });
+    setCardTouched({ cardNumber: false, expiryDate: false, cvv: false });
+    setCurrentStep(1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const authEmailRecipient = (formData.passengers[0]?.email || formData.billingEmail || '').trim();
-  const handleSendAuthorizationEmail = () => {
+  const handleSendAuthorizationEmail = async () => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authEmailRecipient)) {
       alert('Please enter a valid passenger email in Step 1 before sending the authorization email.');
       return;
     }
-    const mailto = buildAuthorizationMailto({ formData, tripType, totalCost, airlinePnrs });
-    setAuthEmailSentAt(new Date().toISOString());
-    window.location.href = mailto;
+    setSendingAuthEmail(true);
+    try {
+      const { subject, html, text } = buildAuthorizationEmail({ formData, tripType, totalCost, airlinePnrs });
+      await sendSmtpEmail({ to: authEmailRecipient, subject, html, text });
+      setAuthEmailSentAt(new Date().toISOString());
+    } catch (err) {
+      alert(`Failed to send authorization email: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setSendingAuthEmail(false);
+    }
   };
 
   const handleCopyEmailHtml = async () => {
@@ -768,6 +1101,137 @@ const NewBooking = () => {
 
   // Step 3 (Final Review) — no inputs; prior steps already enforced
   const isFinalReviewValid = isStep1Valid && isStep2Valid && isStep3Valid;
+
+  // ─── Flight details for the Airline & PNR section ─────────────────────────
+  // Reuses the flight data already in application state (flight-code lookup →
+  // formData.outboundFlight / formData.inboundFlight). No extra API calls.
+  const lookupBusy = isLookingUp.outbound || isLookingUp.return;
+
+  const availableFlights = [
+    { dir: 'outbound', label: 'Outbound Flight', flight: formData.outboundFlight || flightLookupResult.outbound },
+    { dir: 'inbound', label: 'Inbound Flight', flight: formData.inboundFlight || flightLookupResult.return },
+  ].filter(x => Boolean(x.flight));
+
+  const flightPnrKey = (f) => String(f?.pnr ?? '').trim().toUpperCase();
+  const flightCarrierKey = (f) => String(
+    resolveCarrierName(f?.carrier ?? f?.airline, f?.airlineCode ?? f?.carrierCode ?? f?.marketingCode) ?? ''
+  ).trim().toLowerCase();
+
+  const buildSegments = (flight) => {
+    if (!flight) return null;
+    if (Array.isArray(flight.segments) && flight.segments.length > 0) {
+      const inherited = {
+        carrier: flight.carrier,
+        airline: flight.airline,
+        airlineCode: flight.airlineCode,
+        carrierCode: flight.carrierCode,
+        marketingCode: flight.marketingCode,
+        classOfService: flight.classOfService,
+        cabinClass: flight.cabinClass,
+        fareClass: flight.fareClass,
+      };
+      return flight.segments.map(seg => mapSegmentFields({ ...inherited, ...seg }));
+    }
+    return [mapSegmentFields(flight)];
+  };
+
+  // Each Airline & PNR row shows details only once a PNR is entered. Match the
+  // row to a flight by PNR first, then by carrier, then by trip order — each
+  // flight can only be claimed by one row, so rows stay independent.
+  const rowMatchedFlight = airlinePnrs.map(() => null);
+  const claimedDirs = new Set();
+  const claimFlightForRow = (idx, match) => {
+    rowMatchedFlight[idx] = match;
+    claimedDirs.add(match.dir);
+  };
+
+  airlinePnrs.forEach((row, idx) => {
+    const pnrKey = String(row.pnr || '').trim().toUpperCase();
+    if (!pnrKey) return;
+    const match = availableFlights.find(x => !claimedDirs.has(x.dir) && flightPnrKey(x.flight) === pnrKey);
+    if (match) claimFlightForRow(idx, match);
+  });
+  airlinePnrs.forEach((row, idx) => {
+    if (rowMatchedFlight[idx] || !filled(row.pnr)) return;
+    const airlineKey = String(row.airline || '').trim().toLowerCase();
+    if (!airlineKey) return;
+    const match = availableFlights.find(x => !claimedDirs.has(x.dir) && flightCarrierKey(x.flight) === airlineKey);
+    if (match) claimFlightForRow(idx, match);
+  });
+  airlinePnrs.forEach((row, idx) => {
+    if (rowMatchedFlight[idx] || !filled(row.pnr)) return;
+    const match = availableFlights.find(x => !claimedDirs.has(x.dir));
+    if (match) claimFlightForRow(idx, match);
+  });
+
+  // Build the detail blocks shown under the "up to 3 Airlines & PNRs" message:
+  // one per Airline & PNR row that exists, plus a separate block for any
+  // Outbound/Inbound flight not claimed by a row.
+  const flightDetailBlocks = [];
+  airlinePnrs.forEach((row, idx) => {
+    if (!filled(row.airline) && !filled(row.pnr)) return;
+    const match = rowMatchedFlight[idx];
+    const segments = match ? buildSegments(match.flight) : null;
+    flightDetailBlocks.push({
+      key: `pnr-row-${idx}`,
+      title: 'Outbound Flight',
+      badge: match ? `Airline & PNR ${idx + 1} · ${match.label}` : `Airline & PNR ${idx + 1}`,
+      loading: !segments && lookupBusy,
+      segments: segments || [mapSegmentFields({})],
+    });
+  });
+  availableFlights.forEach(x => {
+    if (claimedDirs.has(x.dir)) return;
+    flightDetailBlocks.push({
+      key: `dir-${x.dir}`,
+      title: x.label,
+      badge: null,
+      loading: false,
+      segments: buildSegments(x.flight) || [mapSegmentFields({})],
+    });
+  });
+  // Keep the seven fields visible before any airline/PNR/flight data exists.
+  if (flightDetailBlocks.length === 0) {
+    flightDetailBlocks.push({
+      key: 'pnr-row-0',
+      title: 'Outbound Flight',
+      badge: 'Airline & PNR 1',
+      loading: false,
+      segments: [mapSegmentFields({})],
+    });
+  }
+
+  // Split the blocks so inbound details render in their own column beside the
+  // outbound ones. Round Trip always gets an inbound column, even when no
+  // inbound flight has been looked up yet.
+  const isInboundBlock = (block) =>
+    block.key === 'dir-inbound' ||
+    block.title === 'Inbound Flight' ||
+    String(block.badge || '').includes('Inbound Flight');
+
+  const outboundDetailBlocks = flightDetailBlocks.filter(block => !isInboundBlock(block));
+  const inboundDetailBlocks = flightDetailBlocks.filter(isInboundBlock);
+  if (inboundDetailBlocks.length === 0 && tripType === 'Round Trip') {
+    inboundDetailBlocks.push({
+      key: 'dir-inbound-manual',
+      title: 'Inbound Flight',
+      badge: null,
+      loading: false,
+      segments: [mapSegmentFields({})],
+    });
+  }
+
+  const renderFlightDetailCard = (block) => (
+    <FlightDetailsCard
+      key={block.key}
+      title={block.title}
+      badge={block.badge}
+      loading={block.loading}
+      segments={block.segments}
+      edits={flightDetailEdits[block.key]}
+      onChange={(segIdx, fieldKey, value) => updateFlightDetailEdit(block.key, segIdx, fieldKey, value)}
+    />
+  );
 
   const stepValid = { 1: isStep1Valid, 2: isStep2Valid, 3: isFinalReviewValid };
   const isNextDisabled = currentStep >= 1 && currentStep <= 3 && !stepValid[currentStep];
@@ -1020,6 +1484,18 @@ const NewBooking = () => {
                       )}
                     </div>
                   ))}
+                </div>
+
+                {/* Flight itinerary details — outbound column beside the inbound column */}
+                <div className="flight-detail-columns">
+                  <div className="flight-detail-col">
+                    {outboundDetailBlocks.map(renderFlightDetailCard)}
+                  </div>
+                  {inboundDetailBlocks.length > 0 && (
+                    <div className="flight-detail-col">
+                      {inboundDetailBlocks.map(renderFlightDetailCard)}
+                    </div>
+                  )}
                 </div>
 
               </div>
@@ -1354,9 +1830,10 @@ const NewBooking = () => {
                   </button>
                   <button
                     onClick={handleSendAuthorizationEmail}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', background: authEmailSentAt ? 'white' : 'var(--primary-accent)', color: authEmailSentAt ? 'var(--primary-accent)' : 'white', padding: '0.85rem 1.75rem', borderRadius: 'var(--radius-md)', fontWeight: 700, fontSize: '0.95rem', border: authEmailSentAt ? '2px solid var(--primary-accent)' : 'none', cursor: 'pointer', transition: 'all 0.2s' }}
+                    disabled={sendingAuthEmail}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', background: authEmailSentAt ? 'white' : 'var(--primary-accent)', color: authEmailSentAt ? 'var(--primary-accent)' : 'white', padding: '0.85rem 1.75rem', borderRadius: 'var(--radius-md)', fontWeight: 700, fontSize: '0.95rem', border: authEmailSentAt ? '2px solid var(--primary-accent)' : 'none', cursor: sendingAuthEmail ? 'wait' : 'pointer', transition: 'all 0.2s', opacity: sendingAuthEmail ? 0.7 : 1 }}
                   >
-                    <Send size={16} /> {authEmailSentAt ? 'Resend Authorization Email' : 'Send Authorization Email'}
+                    <Send size={16} /> {sendingAuthEmail ? 'Sending...' : authEmailSentAt ? 'Resend Authorization Email' : 'Send Authorization Email'}
                   </button>
                 </div>
               </div>
@@ -1613,11 +2090,11 @@ const NewBooking = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', textAlign: 'left', marginBottom: '1.5rem' }}>
                 <div>
                   <div style={{ fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Customer ID</div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'monospace', color: 'var(--text-primary)' }}>C-8932</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'monospace', color: 'var(--text-primary)' }}>{savedBooking?.customerId || '—'}</div>
                 </div>
                 <div>
                   <div style={{ fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Booking ID</div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'monospace', color: 'var(--text-primary)' }}>B-23490</div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'monospace', color: 'var(--text-primary)' }}>{savedBooking?.id || '—'}</div>
                 </div>
               </div>
 
@@ -1633,7 +2110,7 @@ const NewBooking = () => {
               </div>
 
               <div style={{ fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Record Locator (PNR)</div>
-              <div style={{ fontSize: '3rem', fontWeight: 800, fontFamily: 'monospace', letterSpacing: '4px', color: 'var(--primary-accent)', marginBottom: '1rem' }}>X7Y8Z9</div>
+              <div style={{ fontSize: '2.25rem', fontWeight: 800, fontFamily: 'monospace', letterSpacing: '2px', color: 'var(--primary-accent)', marginBottom: '1rem', overflowWrap: 'anywhere' }}>{savedBooking?.pnr || '—'}</div>
               
               <div style={{ display: 'flex', justifyContent: 'center', gap: '2rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem', marginTop: '1rem' }}>
                 <div>
@@ -1646,12 +2123,17 @@ const NewBooking = () => {
                 </div>
               </div>
               
-              <div id="pdf-download-btn" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+              <div id="pdf-download-btn" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'center', gap: '1rem', flexWrap: 'wrap' }}>
                 <button onClick={handleDownloadPdf} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'white', color: 'var(--primary-accent)', border: '1px solid var(--primary-accent)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
                   <Download size={18} /> Download PDF Receipt
                 </button>
-                <button onClick={() => navigate('/booking/B-23490')} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--primary-accent)', color: 'white', border: 'none', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
-                  <ExternalLink size={18} /> View Booking & Signature Status
+                {savedBooking?.id && (
+                  <button onClick={() => navigate(`/booking/${savedBooking.id}`)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--primary-accent)', color: 'white', border: 'none', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                    <ExternalLink size={18} /> View Booking & Signature Status
+                  </button>
+                )}
+                <button onClick={startNewBooking} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'white', color: 'var(--text-primary)', border: '1px solid var(--border-color)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                  <Plus size={18} /> Create Another Booking
                 </button>
               </div>
             </div>
@@ -1674,6 +2156,24 @@ const NewBooking = () => {
         .layout-main > div { width: 100%; }
         .pnr-agency-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) auto minmax(0, 1fr); gap: 2rem; }
         .pnr-agency-divider { width: 1px; border-left: 1px dashed var(--border-color); }
+        .flight-detail-columns { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.75rem; align-items: start; min-width: 0; padding-top: 0.25rem; border-top: 1px dashed #dbe3ec; }
+        .flight-detail-col { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+        .flight-details-card { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; box-sizing: border-box; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 0.9rem 1rem 1.05rem; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+        .flight-details-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.4rem 0.6rem; min-width: 0; padding-bottom: 0.65rem; border-bottom: 1px dashed #dbe3ec; }
+        .flight-details-title { font-size: 0.7rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #334155; }
+        .flight-details-badge { font-size: 0.64rem; font-weight: 700; letter-spacing: 0.03em; color: #1d4ed8; background: #eff6ff; border: 1px solid #dbeafe; border-radius: var(--radius-full); padding: 0.18rem 0.6rem; max-width: 100%; overflow-wrap: anywhere; }
+        .flight-details-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.6rem 0.75rem; min-width: 0; }
+        .flight-detail-item { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+        .flight-detail-item > span { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; }
+        .flight-detail-input { display: block; width: 100%; min-width: 0; font-family: inherit; font-size: 0.85rem; font-weight: 600; color: #0f172a; background: #ffffff; border: 1px solid #dbe3ec; border-radius: 8px; padding: 0.5rem 0.6rem; outline: none; box-sizing: border-box; transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease; }
+        .flight-detail-input:hover { border-color: #cbd5e1; }
+        .flight-detail-input:focus { border-color: var(--primary-accent, #2563eb); background: #fff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.13); }
+        .flight-detail-input::placeholder { color: #94a3b8; font-weight: 600; }
+        .flight-segment-title { font-size: 0.66rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: #94a3b8; padding-top: 0.15rem; border-top: 1px dashed #dbe3ec; margin-top: 0.15rem; }
+        .flight-details-loading { display: flex; align-items: center; gap: 0.45rem; font-size: 0.78rem; font-weight: 600; color: #64748b; }
+        @media (max-width: 560px) {
+          .flight-details-grid { grid-template-columns: 1fr; gap: 0.55rem; }
+        }
         @media (max-width: 860px) {
           .pnr-agency-grid { grid-template-columns: 1fr; }
           .pnr-agency-divider { display: none; }

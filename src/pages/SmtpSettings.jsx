@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Mail, Save, Eye, EyeOff, CheckCircle, Server } from 'lucide-react';
+import { Mail, Save, Eye, EyeOff, CheckCircle, Server, Send } from 'lucide-react';
 import { usePermissions } from '../hooks/usePermissions';
-import { getMetadata, setMetadata } from '../services/supabase';
-
-const SMTP_KEY = 'smtpConfig';
+import { loadSmtpConfig, saveSmtpConfig, sendSmtpEmail } from '../services/mailer';
 
 const DEFAULT_CONFIG = {
   host: '',
@@ -26,10 +24,11 @@ const SmtpSettings = () => {
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     const load = async () => {
-      const saved = await getMetadata(SMTP_KEY);
+      const saved = await loadSmtpConfig();
       if (saved) setConfig({ ...DEFAULT_CONFIG, ...saved });
       setLoading(false);
     };
@@ -46,10 +45,36 @@ const SmtpSettings = () => {
     }
     setSaving(true);
     setErrorMsg('');
-    await setMetadata(SMTP_KEY, { ...config, updated_at: new Date().toISOString() });
+    await saveSmtpConfig(config);
     setSaving(false);
     setSuccessMsg('SMTP settings saved successfully.');
     setTimeout(() => setSuccessMsg(''), 3000);
+  };
+
+  const handleTestEmail = async () => {
+    if (!config.host.trim() || !config.port.trim() || !config.fromEmail.trim()) {
+      setErrorMsg('Host, Port, and From Email are required before sending a test.');
+      setTimeout(() => setErrorMsg(''), 4000);
+      return;
+    }
+    setTesting(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      await saveSmtpConfig(config);
+      await sendSmtpEmail({
+        to: config.replyTo?.trim() || config.fromEmail,
+        subject: 'SMTP test — ZSM Travel',
+        html: '<p style="font-family:Arial,sans-serif; font-size:14px;">SMTP configuration is working. You received this test email from ZSM Travel.</p>',
+        text: 'SMTP configuration is working. You received this test email from ZSM Travel.',
+      });
+      setSuccessMsg(`Test email sent to ${config.replyTo?.trim() || config.fromEmail}.`);
+    } catch (err) {
+      setErrorMsg(err?.message || 'Test email failed.');
+    } finally {
+      setTesting(false);
+      setTimeout(() => { setSuccessMsg(''); setErrorMsg(''); }, 6000);
+    }
   };
 
   const inputStyle = {
@@ -76,13 +101,22 @@ const SmtpSettings = () => {
           </p>
         </div>
         {canManage && (
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.25rem', background: '#0ea5e9', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.875rem', cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}
-          >
-            <Save size={16} /> {saving ? 'Saving...' : 'Save Settings'}
-          </button>
+          <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <button
+              onClick={handleTestEmail}
+              disabled={testing || saving}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.25rem', background: 'white', color: '#0ea5e9', border: '2px solid #0ea5e9', borderRadius: '8px', fontWeight: 600, fontSize: '0.875rem', cursor: testing ? 'default' : 'pointer', opacity: testing ? 0.7 : 1 }}
+            >
+              <Send size={16} /> {testing ? 'Sending...' : 'Send Test Email'}
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1.25rem', background: '#0ea5e9', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.875rem', cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1 }}
+            >
+              <Save size={16} /> {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
         )}
       </div>
 

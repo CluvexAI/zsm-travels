@@ -1,7 +1,87 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Plane, User, CreditCard, Mail, ExternalLink, Download, FileText, CheckCircle, AlertCircle } from 'lucide-react';
-import { getMetadata, setMetadata } from '../services/supabase';
+import { Plane, Mail, ExternalLink, Download, FileText, CheckCircle, AlertCircle } from 'lucide-react';
+import { getMetadata, setMetadata, fetchBookings } from '../services/supabase';
+
+const FIELD_LABELS = [
+  { key: 'departureAirport', label: 'Departure Airport' },
+  { key: 'arrivalAirport', label: 'Arrival Airport' },
+  { key: 'departureTime', label: 'Departure Time' },
+  { key: 'arrivalTime', label: 'Arrival Time' },
+  { key: 'flightNumber', label: 'Flight Number' },
+  { key: 'classOfService', label: 'Class of Service' },
+  { key: 'carrier', label: 'Carrier' },
+];
+
+const displayValue = (value) => {
+  if (value === null || value === undefined) return '-';
+  const text = String(value).trim();
+  return text && !['null', 'undefined', 'n/a', 'na'].includes(text.toLowerCase()) ? text : '-';
+};
+
+// Maps the booking stored by NewBooking onto the shape this page renders.
+const mapSavedBooking = (record, bookingId) => {
+  const primary = (record.passengers && record.passengers[0]) || {};
+  const out = record.outboundFlight;
+  const back = record.inboundFlight;
+  return {
+    bookingId: record.id || bookingId,
+    customerId: record.customerId || '-',
+    pnr: record.pnr || '-',
+    customerName: primary.fullName || [primary.firstName, primary.lastName].filter(Boolean).join(' ') || '-',
+    email: primary.email || record.billing?.email || '-',
+    phone: primary.phone || '-',
+    totalAmount: Number(record.pricing?.totalCost || 0),
+    merchantName: record.merchantName || '-',
+    vendorCode: record.vendorCode || '-',
+    descriptor: record.descriptor || '-',
+    bookingSource: record.bookingSource || '-',
+    shift: record.shift || '-',
+    proposalType: record.proposalType || '-',
+    status: record.status || '-',
+    remark: record.remark || '',
+    createdAt: record.createdAt ? new Date(record.createdAt).toLocaleString() : '-',
+    airlinePnrs: Array.isArray(record.airlinePnrs) ? record.airlinePnrs : [],
+    flightDetails: Array.isArray(record.flightDetails) ? record.flightDetails : [],
+    passengers: Array.isArray(record.passengers) ? record.passengers : [],
+    pricing: record.pricing || null,
+    payment: record.payment || null,
+    billing: record.billing || null,
+    flight: {
+      airline: out?.airline || '-',
+      id: out?.flightCode || out?.id || '-',
+      route: out ? `${out.from} to ${out.to}` : `${record.fromAirport || '-'} to ${record.toAirport || '-'}`,
+      date: out?.date || record.departureDate || '-',
+      time: out?.departureTime || '-',
+      inbound: back
+        ? { airline: back.airline || '-', id: back.flightCode || back.id || '-', date: back.date || '-', time: back.departureTime || '-' }
+        : null,
+    },
+  };
+};
+
+const mockBooking = (bookingId) => ({
+  bookingId: bookingId || 'B-23490',
+  customerId: 'C-8932',
+  pnr: 'X7Y8Z9',
+  customerName: 'John Doe',
+  email: 'johndoe@example.com',
+  phone: '+1 555-0198',
+  totalAmount: 1450.50,
+  merchantName: 'ZSM Travel',
+  vendorCode: 'VND-001',
+  createdAt: 'Oct 15, 2026, 10:30 AM',
+  airlinePnrs: [],
+  flightDetails: [],
+  flight: {
+    airline: 'American Airlines',
+    id: 'AA204',
+    route: 'JFK to LAX',
+    date: 'Oct 15, 2026',
+    time: '10:15 AM',
+    inbound: null,
+  },
+});
 
 const BookingDetails = () => {
   const { bookingId } = useParams();
@@ -10,28 +90,20 @@ const BookingDetails = () => {
   const [emailSent, setEmailSent] = useState(false);
 
   useEffect(() => {
-    // Mock fetching booking data
+    // Load the booking saved from New Booking; fall back to demo data if the
+    // id is not in storage (e.g. an old or hand-written link).
     const fetchData = async () => {
-      setBooking({
-        bookingId: bookingId || 'B-23490',
-        customerId: 'C-8932',
-        pnr: 'X7Y8Z9',
-        customerName: 'John Doe',
-        email: 'johndoe@example.com',
-        phone: '+1 555-0198',
-        totalAmount: 1450.50,
-        merchantName: 'ZSM Travel',
-        vendorCode: 'VND-001',
-        createdAt: 'Oct 15, 2026, 10:30 AM',
-        flight: {
-          airline: 'American Airlines',
-          id: 'AA204',
-          route: 'JFK to LAX',
-          date: 'Oct 15, 2026',
-          time: '10:15 AM'
-        }
-      });
-      
+      try {
+        const bookings = await fetchBookings();
+        const found = Array.isArray(bookings)
+          ? bookings.find(b => String(b.id) === String(bookingId))
+          : null;
+        setBooking(found ? mapSavedBooking(found, bookingId) : mockBooking(bookingId));
+      } catch (err) {
+        console.error('Failed to load booking:', err);
+        setBooking(mockBooking(bookingId));
+      }
+
       const emailStatus = await getMetadata(`email_sent_${bookingId}`);
       if (emailStatus) setEmailSent(true);
 
@@ -41,7 +113,7 @@ const BookingDetails = () => {
         setSignatureData(typeof dataStr === 'string' ? JSON.parse(dataStr) : dataStr);
       }
     };
-    setTimeout(fetchData, 500);
+    fetchData();
   }, [bookingId]);
 
   const handleSendEmail = async () => {
@@ -184,13 +256,66 @@ const BookingDetails = () => {
           {/* Flight Details */}
           <div style={{ background: 'white', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)', padding: '1.5rem' }}>
             <h3 style={{ margin: '0 0 1rem 0', fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)' }}>Flight Itinerary</h3>
-            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '1rem', background: 'var(--bg-base)', borderRadius: 'var(--radius-md)' }}>
-              <Plane size={24} color="var(--primary-accent)" />
-              <div>
-                <div style={{ fontWeight: 600, fontSize: '1.125rem' }}>{booking.flight.route}</div>
-                <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{booking.flight.airline} • {booking.flight.id} • {booking.flight.date} at {booking.flight.time}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '1rem', background: 'var(--bg-base)', borderRadius: 'var(--radius-md)' }}>
+                <Plane size={24} color="var(--primary-accent)" />
+                <div>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>Outbound</div>
+                  <div style={{ fontWeight: 600, fontSize: '1.125rem' }}>{booking.flight.route}</div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{booking.flight.airline} • {booking.flight.id} • {booking.flight.date} at {booking.flight.time}</div>
+                </div>
               </div>
+              {booking.flight.inbound && (
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', padding: '1rem', background: 'var(--bg-base)', borderRadius: 'var(--radius-md)' }}>
+                  <Plane size={24} color="var(--primary-accent)" style={{ transform: 'scaleX(-1)' }} />
+                  <div>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>Inbound</div>
+                    <div style={{ fontWeight: 600, fontSize: '1.125rem' }}>{booking.flight.inbound.id} · {booking.flight.inbound.airline}</div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>{booking.flight.inbound.date} at {booking.flight.inbound.time}</div>
+                  </div>
+                </div>
+              )}
             </div>
+
+            {booking.airlinePnrs.length > 0 && (
+              <div style={{ marginTop: '1.25rem' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Airline &amp; PNR</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  {booking.airlinePnrs.map((row, i) => (
+                    <span key={i} style={{ fontSize: '0.8rem', fontWeight: 600, padding: '0.3rem 0.7rem', borderRadius: 'var(--radius-full)', background: 'var(--bg-base)', border: '1px solid var(--border-color)' }}>
+                      {row.airline || '—'} · {row.pnr || '—'} · {row.status}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {booking.flightDetails.length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem', marginTop: '1.25rem' }}>
+                {booking.flightDetails.map(block => (
+                  <div key={block.key} style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem', background: 'var(--bg-base)' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                      {block.title}{block.badge ? ` · ${block.badge}` : ''}
+                    </div>
+                    {(block.segments || []).map((seg, segIdx) => (
+                      <div key={segIdx}>
+                        {(block.segments || []).length > 1 && (
+                          <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0.5rem 0 0.35rem' }}>Segment {segIdx + 1}</div>
+                        )}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem 1rem' }}>
+                          {FIELD_LABELS.map(field => (
+                            <div key={field.key}>
+                              <div style={{ fontSize: '0.63rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>{field.label}</div>
+                              <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{displayValue(seg[field.key])}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
         </div>
