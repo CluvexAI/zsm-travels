@@ -68,7 +68,11 @@ export const usePermissions = () => {
   const canAccess = (featureKey) => {
     const feature = FEATURE_PERMISSION_MAP[featureKey];
     if (!feature) return false;
-    return hasAnyPermission(feature.module, feature.action);
+    // action may be a single action ('View') or a list of equivalent actions
+    // (['Request', 'Process']) so roles that only PROCESS a request still reach
+    // the screen that serves it.
+    const actions = Array.isArray(feature.action) ? feature.action : [feature.action];
+    return actions.some((action) => hasAnyPermission(feature.module, action));
   };
 
   /**

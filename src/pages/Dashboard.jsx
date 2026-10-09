@@ -6,6 +6,8 @@ import {
 import { Bell } from 'lucide-react';
 import { usePermissions } from '../hooks/usePermissions';
 import { fetchLeads, fetchBookings } from '../services/supabase';
+import { normalizeBookingsForSearch } from '../utils/bookingNormalizer';
+import { SERVICE_TYPES } from '../utils/serviceTypes';
 
 const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
 
@@ -42,7 +44,7 @@ const Dashboard = () => {
   const { hasPermission } = usePermissions();
   const [filters, setFilters] = useState({
     cxId: '', bookingId: '', pnr: '', customerName: '', cxPhone: '', customerEmail: '',
-    agent: '', altPhone: '', passengerName: '', fromDate: '', toDate: '', status: ''
+    agent: '', altPhone: '', passengerName: '', fromDate: '', toDate: '', status: '', service: ''
   });
   const [recentLeads, setRecentLeads] = useState([]);
   const [metrics, setMetrics] = useState({
@@ -73,6 +75,7 @@ const Dashboard = () => {
       }
 
       if (savedBookings) {
+        const rows = normalizeBookingsForSearch(savedBookings);
         let mco = 0;
         let charged = 0;
         let chargeback = 0;
@@ -81,7 +84,7 @@ const Dashboard = () => {
         let partialRefund = 0;
         let cost = 0;
 
-        savedBookings.forEach(b => {
+        rows.forEach(b => {
           const amt = parseFloat(String(b.amount || '0').replace(/[^0-9.-]+/g,"")) || 0;
           
           if (b.status === 'Cancelled') {
@@ -98,8 +101,8 @@ const Dashboard = () => {
             chargeback += amt;
           }
 
-          mco += parseFloat(b.customActualMCO || b.actualMCO || b.mco || 0);
-          cost += parseFloat(b.customActualCost || b.actualCost || b.airlineCost || 0);
+          mco += parseFloat(b.customActualMCO || b.pricing?.actualMCO || b.actualMCO || b.mco || 0);
+          cost += parseFloat(b.customActualCost || b.pricing?.actualCost || b.actualCost || b.airlineCost || 0);
         });
 
         setMetrics({
@@ -128,7 +131,7 @@ const Dashboard = () => {
   const handleClear = () => {
     setFilters({
       cxId: '', bookingId: '', pnr: '', customerName: '', cxPhone: '', customerEmail: '',
-      agent: '', altPhone: '', passengerName: '', fromDate: '', toDate: '', status: ''
+      agent: '', altPhone: '', passengerName: '', fromDate: '', toDate: '', status: '', service: ''
     });
   };
 
@@ -187,6 +190,15 @@ const Dashboard = () => {
                   <option value="Cancelled">Cancelled</option>
                   <option value="Completed">Completed</option>
                   <option value="On Hold">On Hold</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>Service</label>
+                <select className="form-input" value={filters.service} onChange={(e) => setFilters({...filters, service: e.target.value})}>
+                  <option value="">All Services</option>
+                  {SERVICE_TYPES.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
                 </select>
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>

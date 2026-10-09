@@ -336,16 +336,16 @@ export const FEATURE_PERMISSION_MAP = {
 
   // ── BOOKING MENU ───────────────────────────────────────────────────────────
   'new-booking':          { module: 'Bookings',                          action: 'Create',   label: 'New Booking',                path: '/new-booking',          category: 'booking' },
-  'profile-info-change':  { module: 'Action: Name Correction',           action: 'Request',  label: 'Profile Info Change',        path: '/profile-info-change',  category: 'booking' },
-  'change-itinerary':     { module: 'Action: Itinerary Change',          action: 'Request',  label: 'Change Itinerary',           path: '/change-itinerary',     category: 'booking' },
-  'cancellation-refund':  { module: 'Action: Cancellation for Refund',   action: 'Request',  label: 'Cancellation for Refund',    path: '/cancellation-refund',  category: 'booking' },
-  'cancellation-credit':  { module: 'Action: Cancellation for Credit',   action: 'Request',  label: 'Cancellation for Credit',    path: '/cancellation-credit',  category: 'booking' },
-  'seat-assign':          { module: 'Action: Seat Assignment',            action: 'Request',  label: 'Seat Assignment & PNR',      path: '/seat-assign',          category: 'booking' },
-  'add-baggage':          { module: 'Action: Baggage',                    action: 'Request',  label: 'Add / Edit Baggage',         path: '/add-baggage',          category: 'booking' },
+  'profile-info-change':  { module: 'Action: Name Correction',           action: ['Request', 'Process'],  label: 'Profile Info Change',        path: '/profile-info-change',  category: 'booking' },
+  'change-itinerary':     { module: 'Action: Itinerary Change',          action: ['Request', 'Process'],  label: 'Change Itinerary',           path: '/change-itinerary',     category: 'booking' },
+  'cancellation-refund':  { module: 'Action: Cancellation for Refund',   action: ['Request', 'Process'],  label: 'Cancellation for Refund',    path: '/cancellation-refund',  category: 'booking' },
+  'cancellation-credit':  { module: 'Action: Cancellation for Credit',   action: ['Request', 'Process'],  label: 'Cancellation for Credit',    path: '/cancellation-credit',  category: 'booking' },
+  'seat-assign':          { module: 'Action: Seat Assignment',            action: ['Request', 'Process'],  label: 'Seat Assignment & PNR',      path: '/seat-assign',          category: 'booking' },
+  'add-baggage':          { module: 'Action: Baggage',                    action: ['Request', 'Process'],  label: 'Add / Edit Baggage',         path: '/add-baggage',          category: 'booking' },
   'add-insurance':        { module: 'Service Actions',                    action: 'View',     label: 'Add / Edit Insurance',       path: '/add-insurance',        category: 'booking' },
-  'pet-booking':          { module: 'Action: Pet Booking',                action: 'Request',  label: 'Pet Booking',                path: '/pet-booking',          category: 'booking' },
-  'seat-upgrade':         { module: 'Action: Seat Upgrade',               action: 'Request',  label: 'Seat Upgrade',               path: '/seat-upgrade',         category: 'booking' },
-  'umnr-booking':         { module: 'Action: Minor Alone Booking',        action: 'Request',  label: 'UMNR Service',               path: '/umnr-booking',         category: 'booking' },
+  'pet-booking':          { module: 'Action: Pet Booking',                action: ['Request', 'Process'],  label: 'Pet Booking',                path: '/pet-booking',          category: 'booking' },
+  'seat-upgrade':         { module: 'Action: Seat Upgrade',               action: ['Request', 'Process'],  label: 'Seat Upgrade',               path: '/seat-upgrade',         category: 'booking' },
+  'umnr-booking':         { module: 'Action: Minor Alone Booking',        action: ['Request', 'Process'],  label: 'UMNR Service',               path: '/umnr-booking',         category: 'booking' },
 
   // ── REPORTS MENU ───────────────────────────────────────────────────────────
   'retention-reports':    { module: 'Reports',               action: 'View',   label: 'Retention Reports',        path: '/reports/retention-reports',      category: 'reports' },

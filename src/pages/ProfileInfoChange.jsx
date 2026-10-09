@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { usePrefillBookingSearch } from '../utils/usePrefillBookingSearch';
 import { Search, Edit3, X, User, Phone, Mail, MapPin, Save, Check, AlertCircle } from 'lucide-react';
 
 // Mock reservations for search
@@ -28,6 +29,7 @@ const ProfileInfoChange = () => {
     fromDate: '',
     toDate: ''
   });
+  usePrefillBookingSearch(setSearchFilters);
 
   const [searchResults, setSearchResults] = useState([]);
   const [hasSearched, setHasSearched] = useState(false);

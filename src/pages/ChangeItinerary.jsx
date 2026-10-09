@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { usePrefillBookingSearch } from '../utils/usePrefillBookingSearch';
 import { Search, Edit3, X, Save, Check, AlertCircle, PlaneTakeoff, MapPin, Calendar, Hash, ArrowRightLeft, Plane } from 'lucide-react';
 
 // Mock reservations for search
@@ -39,6 +40,7 @@ const ChangeItinerary = () => {
     fromDate: '',
     toDate: ''
   });
+  usePrefillBookingSearch(setSearchFilters);
 
   const [searchResults, setSearchResults] = useState([]);
   const [hasSearched, setHasSearched] = useState(false);
@@ -527,29 +529,7 @@ const ChangeItinerary = () => {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
                     <div>
-                      <label style={labelStyle}>Payment Option</label>
-                      <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 600, color: '#374151' }}>
-                          <input 
-                            type="radio" 
-                            name="paymentOption" 
-                            value="Customer Card" 
-                            checked={editData.paymentOption === 'Customer Card'} 
-                            onChange={(e) => handleFieldChange('paymentOption', e.target.value)}
-                            style={{ accentColor: '#805ad5' }}
-                          /> Customer Card
-                        </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 600, color: '#374151' }}>
-                          <input 
-                            type="radio" 
-                            name="paymentOption" 
-                            value="Company Card" 
-                            checked={editData.paymentOption === 'Company Card'} 
-                            onChange={(e) => handleFieldChange('paymentOption', e.target.value)}
-                            style={{ accentColor: '#805ad5' }}
-                          /> Company Card
-                        </label>
-                      </div>
+                      
                     </div>
                     <div>
                       <label style={labelStyle}>Editable Billing Amount ($)</label>

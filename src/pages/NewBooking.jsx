@@ -2,10 +2,16 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, ChevronLeft, Check, CreditCard, User, Plane, DollarSign, Search, ShieldAlert, PlaneTakeoff, PlaneLanding, Clock, Loader2, X, Plus, Minus, Download, ExternalLink, Home, Info, Mail, Send, CheckCircle2, Copy } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
-import { getMetadata, setMetadata, saveBookings, fetchBookings } from '../services/supabase';
-import { isSabreConfigured, lookupSabreFlight } from '../services/sabre';
+import { getMetadata, setMetadata, saveBooking } from '../services/supabase';
+import { searchFlightOffers } from '../services/flightSearch';
+import { mapFlightSearchResponse } from '../utils/searchResultMapper';
+import { AIRLINE_NAMES, mockFlights, legToFlight } from '../utils/flightCatalog';
+import SearchResultsList from '../components/searchResults/SearchResultsList';
+import SearchSummary from '../components/searchResults/SearchSummary';
 import { buildAuthorizationEmail } from '../utils/authorizationEmailTemplate';
 import { sendSmtpEmail } from '../services/mailer';
+import { SERVICE_TYPES, DEFAULT_SERVICE, normalizeService } from '../utils/serviceTypes';
+import { MERCHANT_OPTIONS } from '../utils/merchantOptions';
 
 const steps = [
   { id: 1, title: 'Passenger & Payment', icon: <User size={18} /> },
@@ -16,6 +22,9 @@ const steps = [
 
 const vendorCodeOptions = ['VND-001', 'VND-002', 'VND-003'];
 const descriptorOptions = ['01', '02'];
+const gatewayOptions = ['Connex-pay', 'Stripe', 'PayPal', 'Square'];
+const paymentTypeOptions = ['Single Charge', 'Split Charge'];
+const paymentModeOptions = ['CX Card', 'Company Card', 'CX Card + Miles', 'Miles'];
 
 const createDefaultFormData = () => ({
   passengersCount: 1,
@@ -25,6 +34,8 @@ const createDefaultFormData = () => ({
   toAirport: 'LAX',
   passengers: [{ title: 'Mr', passengerType: 'Adult', firstName: '', middleName: '', lastName: '', dob: '', gender: 'Male', phoneCode: '+1', phone: '', altPhoneCode: '+1', altPhone: '', email: '', eTicket: '', carryOn: '1 Bag (Included)', checkInBag: 'None', insurance: 'None' }],
   paymentMethod: 'Customer Card',
+  paymentType: 'Single Charge',
+  paymentMode: 'CX Card',
   cardNumber: '',
   expiryDate: '',
   cvv: '',
@@ -34,12 +45,16 @@ const createDefaultFormData = () => ({
   customServiceFee: null,
   customActualCost: null,
   customActualMCO: null,
+  customTotalCost: null,
+  customMCO: null,
   merchantName: '',
   vendorCode: '',
   descriptor: '',
+  gateway: '',
   bookingSource: '',
   shift: '',
-  proposalType: '',
+  paymentBy: '',
+  service: DEFAULT_SERVICE,
   cardName: '',
   billingAddressLine1: '',
   billingAddressLine2: '',
@@ -59,12 +74,21 @@ const createDefaultAirlinePnrs = () => [
   { airline: '', pnr: '', status: 'On Hold' },
 ];
 
+// The draft is persisted to Supabase on every keystroke, so card credentials
+// must never ride along (PCI-DSS 3.3.1 — PAN/CVV are not stored). The saved
+// booking already keeps only cardLast4/cardExpiry.
+const stripCardCredentials = (formData) => {
+  if (!formData) return formData;
+  const { cardNumber, cvv, ...safe } = formData;
+  return { ...safe, cardNumber: '', cvv: '' };
+};
+
 // Everything typed on /new-booking, so the form can be restored after reload.
 const buildBookingDraft = (state, overrides = {}) => ({
   currentStep: state.currentStep,
   returnStep: state.returnStep,
   tripType: state.tripType,
-  formData: state.formData,
+  formData: stripCardCredentials(state.formData),
   authEmailSentAt: state.authEmailSentAt,
   flightCodeInput: state.flightCodeInput,
   flightLookupResult: state.flightLookupResult,
@@ -73,81 +97,12 @@ const buildBookingDraft = (state, overrides = {}) => ({
   itineraryDraft: state.itineraryDraft,
   itineraryModalType: state.itineraryModalType,
   savedBooking: state.savedBooking,
+  cloudSaveFailed: state.cloudSaveFailed,
   ...overrides,
 });
 
-const AIRLINE_NAMES = {
-  AA: 'American Airlines', DL: 'Delta Air Lines', UA: 'United Airlines', B6: 'JetBlue Airways',
-  WN: 'Southwest Airlines', AS: 'Alaska Airlines', NK: 'Spirit Airlines', F9: 'Frontier Airlines',
-};
-
-// Local test lookup — used when Sabre/proxy is unavailable so Preview always works.
-const resolveLocalFlight = (code, type, form) => {
-  const exact = mockFlights.filter(f => f.flightCode === code || f.id === code);
-  const dirMatch = type === 'outbound'
-    ? exact.find(f => f.route === form.fromAirport) || exact[0]
-    : exact.find(f => f.route === form.toAirport) || exact[0];
-
-  const matched = dirMatch || mockFlights.find(f =>
-    type === 'outbound' ? f.route === form.fromAirport && f.dest === form.toAirport
-                        : f.route === form.toAirport && f.dest === form.fromAirport
-  );
-
-  if (matched) {
-    return {
-      ...matched,
-      pnr: matched.pnr || `TST${Math.random().toString(36).toUpperCase().slice(2, 8)}`,
-      found: true,
-      source: 'local',
-    };
-  }
-
-  const m = code.match(/^([A-Z]{2})(\d{1,4})$/);
-  if (!m) throw new Error(`No flight found for "${code}".`);
-  const [, airlineCode, flightNumber] = m;
-  const depart = new Date();
-  depart.setDate(depart.getDate() + 7);
-  const returnDate = new Date(depart);
-  returnDate.setDate(returnDate.getDate() + 7);
-  const route = type === 'outbound' ? form.fromAirport : form.toAirport;
-  const dest = type === 'outbound' ? form.toAirport : form.fromAirport;
-  return {
-    id: code,
-    airlineCode,
-    flightNumber,
-    flightCode: code,
-    airline: AIRLINE_NAMES[airlineCode] || airlineCode,
-    route,
-    dest,
-    origin: route,
-    destination: dest,
-    departureAirport: route,
-    arrivalAirport: dest,
-    date: (type === 'outbound' ? depart : returnDate).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-    time: '10:00 AM',
-    arrTime: '01:30 PM',
-    duration: '6h 30m',
-    stops: 'Non-stop',
-    baggage: '1 Checked Bag',
-    fareClass: 'Economy',
-    price: 320.00,
-    pnr: `TST${Math.random().toString(36).toUpperCase().slice(2, 8)}`,
-    found: true,
-    source: 'local',
-  };
-};
-
-const mockFlights = [
-  // Outbound Flights
-  { id: 'AA204', airlineCode: 'AA', flightNumber: '204', flightCode: 'AA204', airline: 'American Airlines', color: '#1a73e8', route: 'JFK', dest: 'LAX', origin: 'JFK', destination: 'LAX', departureAirport: 'JFK', arrivalAirport: 'LAX', date: 'Oct 15, 2026', time: '10:15 AM', arrTime: '01:45 PM', duration: '6h 30m', stops: 'Non-stop', baggage: 'Carry-on Only', fareClass: 'Basic Economy', price: 289.00, isBestValue: true },
-  { id: 'DL101', airlineCode: 'DL', flightNumber: '101', flightCode: 'DL101', airline: 'Delta Air Lines', color: '#e51420', route: 'JFK', dest: 'LAX', origin: 'JFK', destination: 'LAX', departureAirport: 'JFK', arrivalAirport: 'LAX', date: 'Oct 15, 2026', time: '08:00 AM', arrTime: '11:30 AM', duration: '6h 30m', stops: 'Non-stop', baggage: '1 Checked Bag', fareClass: 'Main Cabin', price: 345.50, isBestValue: false },
-  { id: 'UA312', airlineCode: 'UA', flightNumber: '312', flightCode: 'UA312', airline: 'United Airlines', color: '#002244', route: 'JFK', dest: 'LAX', origin: 'JFK', destination: 'LAX', departureAirport: 'JFK', arrivalAirport: 'LAX', date: 'Oct 15, 2026', time: '02:00 PM', arrTime: '05:30 PM', duration: '6h 30m', stops: 'Non-stop', baggage: '1 Checked Bag', fareClass: 'Economy', price: 395.00, isBestValue: false },
-  { id: 'B6405', airlineCode: 'B6', flightNumber: '405', flightCode: 'B6405', airline: 'JetBlue Airways', color: '#0033a0', route: 'JFK', dest: 'SFO', origin: 'JFK', destination: 'SFO', departureAirport: 'JFK', arrivalAirport: 'SFO', date: 'Oct 15, 2026', time: '07:30 AM', arrTime: '11:15 AM', duration: '6h 45m', stops: 'Non-stop', baggage: '1 Checked Bag', fareClass: 'Blue Basic', price: 215.00, isBestValue: false },
-  // Inbound Flights
-  { id: 'AA305', airlineCode: 'AA', flightNumber: '305', flightCode: 'AA305', airline: 'American Airlines', color: '#1a73e8', route: 'LAX', dest: 'JFK', origin: 'LAX', destination: 'JFK', departureAirport: 'LAX', arrivalAirport: 'JFK', date: 'Oct 22, 2026', time: '09:00 AM', arrTime: '05:30 PM', duration: '5h 30m', stops: 'Non-stop', baggage: 'Carry-on Only', fareClass: 'Basic Economy', price: 279.00, isBestValue: true },
-  { id: 'DL202', airlineCode: 'DL', flightNumber: '202', flightCode: 'DL202', airline: 'Delta Air Lines', color: '#e51420', route: 'LAX', dest: 'JFK', origin: 'LAX', destination: 'JFK', departureAirport: 'LAX', arrivalAirport: 'JFK', date: 'Oct 22, 2026', time: '11:45 AM', arrTime: '08:15 PM', duration: '5h 30m', stops: 'Non-stop', baggage: '1 Checked Bag', fareClass: 'Main Cabin', price: 355.00, isBestValue: false },
-  { id: 'UA415', airlineCode: 'UA', flightNumber: '415', flightCode: 'UA415', airline: 'United Airlines', color: '#002244', route: 'LAX', dest: 'JFK', origin: 'LAX', destination: 'JFK', departureAirport: 'LAX', arrivalAirport: 'JFK', date: 'Oct 22, 2026', time: '10:30 PM', arrTime: '06:45 AM', duration: '5h 15m', stops: 'Non-stop', baggage: '1 Checked Bag', fareClass: 'Economy', price: 310.00, isBestValue: false },
-];
+// AIRLINE_NAMES, mockFlights and resolveLocalFlight live in utils/flightCatalog.js
+// so the search-results layer and this typeahead share one source.
 
 // ─── Flight details mapping layer ────────────────────────────────────────────
 // Maps whatever shape the selected flight/segment arrives in (local mock, Sabre
@@ -323,6 +278,7 @@ const NewBooking = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [returnStep, setReturnStep] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [cloudSaveFailed, setCloudSaveFailed] = useState(false);
   // Details of the booking created on submit — persisted with the draft so the
   // confirmation screen survives a reload.
   const [savedBooking, setSavedBooking] = useState(null);
@@ -335,6 +291,12 @@ const NewBooking = () => {
   const [flightLookupError, setFlightLookupError] = useState({ outbound: '', return: '' });
   const [isLookingUp, setIsLookingUp] = useState({ outbound: false, return: false });
   const [flightCodeOpen, setFlightCodeOpen] = useState({ outbound: false, return: false });
+  // Search results for each direction: normalized combinations + UI phase.
+  // phase: 'idle' | 'loading' | 'results' | 'empty' | 'error'
+  const [searchPhase, setSearchPhase] = useState({ outbound: 'idle', return: 'idle' });
+  const [searchResults, setSearchResults] = useState({ outbound: [], return: [] });
+  const [searchErrorMsg, setSearchErrorMsg] = useState({ outbound: '', return: '' });
+  const [selectedResultId, setSelectedResultId] = useState({ outbound: null, return: null });
   // Manual overrides for the seven Flight Details fields, keyed by detail block
   // then segment index: { [blockKey]: { [segIdx]: { fieldKey: value } } }.
   const [flightDetailEdits, setFlightDetailEdits] = useState({});
@@ -488,75 +450,68 @@ const NewBooking = () => {
     if (!match) {
       setFlightLookupError(prev => ({ ...prev, [type]: 'Invalid format. Use airline code + flight number (e.g. AA204, DL101).' }));
       setFlightLookupResult(prev => ({ ...prev, [type]: null }));
+      setSearchPhase(prev => ({ ...prev, [type]: 'idle' }));
+      setSearchResults(prev => ({ ...prev, [type]: [] }));
       return;
     }
     setIsLookingUp(prev => ({ ...prev, [type]: true }));
     setFlightLookupError(prev => ({ ...prev, [type]: '' }));
-    setFlightLookupResult(prev => ({ ...prev, [type]: null }));
+    setSearchErrorMsg(prev => ({ ...prev, [type]: '' }));
+    setSearchResults(prev => ({ ...prev, [type]: [] }));
+    setSelectedResultId(prev => ({ ...prev, [type]: null }));
+    setSearchPhase(prev => ({ ...prev, [type]: 'loading' }));
 
     try {
-      let data;
-      const from = type === 'outbound' ? formData.fromAirport : formData.toAirport;
-      const to = type === 'outbound' ? formData.toAirport : formData.fromAirport;
+      const { offers, error } = await searchFlightOffers({
+        flightCode: code,
+        type,
+        form: formData,
+        tripType,
+        existingOutbound: formData.outboundFlight,
+        existingInbound: formData.inboundFlight,
+      });
 
-      if (isSabreConfigured()) {
-        // Sabre REST API (test) — https://developer.sabre.com
-        try {
-          data = await lookupSabreFlight({
-            flightCode: code,
-            from,
-            to,
-            tripType: type === 'outbound' ? tripType : 'One Way',
-          });
-        } catch (sabreErr) {
-          // Test keys often fail auth/CORS/BFM entitlement — fall back to local data so Preview still works.
-          console.warn('Sabre lookup failed, using local fallback:', sabreErr.message);
-          data = resolveLocalFlight(code, type, formData);
-        }
-      } else {
-        const apiBaseUrl = import.meta.env.VITE_PNR_API_URL;
-        if (!apiBaseUrl) {
-          data = resolveLocalFlight(code, type, formData);
-        } else {
-          const response = await fetch(`${apiBaseUrl}/pnr/lookup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ flightCode: code }),
-          });
-
-          if (response.status === 404) {
-            setFlightLookupError(prev => ({ ...prev, [type]: `No flight found for code "${code}". Please check and try again.` }));
-            return;
-          }
-          if (!response.ok) {
-            throw new Error(`Flight lookup failed (${response.status}).`);
-          }
-          data = await response.json();
-        }
+      if (error) {
+        setSearchErrorMsg(prev => ({ ...prev, [type]: error }));
+        setSearchPhase(prev => ({ ...prev, [type]: 'error' }));
+        return;
       }
 
-      // Expected shape: { pnr, airline, flightCode, route, dest, date, time, arrTime, price, ... }
-      data = {
-        duration: '—',
-        stops: '—',
-        baggage: '—',
-        fareClass: 'Economy',
-        price: 320.00,
-        ...data,
-        found: true,
-      };
-      setFlightLookupResult(prev => ({ ...prev, [type]: data }));
-      if (type === 'outbound') {
-        setFormData(prev => ({ ...prev, outboundFlight: data, fromAirport: data.route || prev.fromAirport, toAirport: data.dest || prev.toAirport }));
-      } else {
-        setFormData(prev => ({ ...prev, inboundFlight: data }));
-      }
-      openItineraryModal(type);
+      // Raw backend response → normalized model; the UI never sees raw shapes.
+      const combinations = mapFlightSearchResponse(offers);
+      setSearchResults(prev => ({ ...prev, [type]: combinations }));
+      setSearchPhase(prev => ({ ...prev, [type]: combinations.length ? 'results' : 'empty' }));
     } catch (err) {
-      setFlightLookupError(prev => ({ ...prev, [type]: err.message || 'Something went wrong while fetching the flight details. Please try again.' }));
+      setSearchErrorMsg(prev => ({
+        ...prev,
+        [type]: err.message || 'Something went wrong while fetching the flight details. Please try again.',
+      }));
+      setSearchPhase(prev => ({ ...prev, [type]: 'error' }));
     } finally {
       setIsLookingUp(prev => ({ ...prev, [type]: false }));
     }
+  };
+
+  // "SELECT FLIGHT" on a result card — hands the chosen itinerary into the
+  // existing booking flow exactly like the old single-result preview did.
+  const selectCombination = (type, combination) => {
+    const leg = combination?.legs?.[type];
+    if (!leg) return;
+    const pnr = combination.airlines?.find(a => a.pnr)?.pnr;
+    const data = legToFlight(leg, pnr ? { pnr } : {});
+    if (!data) return;
+    const firstSegmentCode = leg.segments?.[0]?.flightCode || data.flightCode;
+    setFlightCodeInput(prev => ({ ...prev, [type]: firstSegmentCode }));
+    setFlightCodeOpen(prev => ({ ...prev, [type]: false }));
+    setFlightLookupError(prev => ({ ...prev, [type]: '' }));
+    setFlightLookupResult(prev => ({ ...prev, [type]: data }));
+    setSelectedResultId(prev => ({ ...prev, [type]: combination.id }));
+    if (type === 'outbound') {
+      setFormData(prev => ({ ...prev, outboundFlight: data, fromAirport: data.route || prev.fromAirport, toAirport: data.dest || prev.toAirport }));
+    } else {
+      setFormData(prev => ({ ...prev, inboundFlight: data }));
+    }
+    openItineraryModal(type);
   };
 
   const clearFlightLookup = (type) => {
@@ -564,6 +519,10 @@ const NewBooking = () => {
     setFlightLookupResult(prev => ({ ...prev, [type]: null }));
     setFlightLookupError(prev => ({ ...prev, [type]: '' }));
     setFlightCodeOpen(prev => ({ ...prev, [type]: false }));
+    setSearchPhase(prev => ({ ...prev, [type]: 'idle' }));
+    setSearchResults(prev => ({ ...prev, [type]: [] }));
+    setSearchErrorMsg(prev => ({ ...prev, [type]: '' }));
+    setSelectedResultId(prev => ({ ...prev, [type]: null }));
     if (type === 'outbound') setFormData(prev => ({ ...prev, outboundFlight: null }));
     if (type === 'return') setFormData(prev => ({ ...prev, inboundFlight: null }));
   };
@@ -588,6 +547,7 @@ const NewBooking = () => {
     itineraryDraft,
     itineraryModalType,
     savedBooking,
+    cloudSaveFailed,
   });
 
   useEffect(() => {
@@ -607,6 +567,7 @@ const NewBooking = () => {
           if (saved.itineraryDraft) setItineraryDraft(saved.itineraryDraft);
           if (saved.itineraryModalType) setItineraryModalType(saved.itineraryModalType);
           if (saved.savedBooking) setSavedBooking(saved.savedBooking);
+          if (typeof saved.cloudSaveFailed === 'boolean') setCloudSaveFailed(saved.cloudSaveFailed);
         }
       } catch (err) {
         console.error('Failed to load booking draft:', err);
@@ -636,8 +597,9 @@ const NewBooking = () => {
       itineraryDraft,
       itineraryModalType,
       savedBooking,
+      cloudSaveFailed,
     }));
-  }, [currentStep, returnStep, tripType, formData, authEmailSentAt, flightCodeInput, flightLookupResult, flightDetailEdits, airlinePnrs, itineraryDraft, itineraryModalType, savedBooking]);
+  }, [currentStep, returnStep, tripType, formData, authEmailSentAt, flightCodeInput, flightLookupResult, flightDetailEdits, airlinePnrs, itineraryDraft, itineraryModalType, savedBooking, cloudSaveFailed]);
 
   // -- Credit Card Helpers --
   const luhnCheck = (num) => {
@@ -756,16 +718,18 @@ const NewBooking = () => {
       // Save booking to Supabase before moving to confirmation step
       setIsSaving(true);
       try {
-        const bookingId = `BK-${Date.now()}`;
-        const customerId = `C-${String(Date.now()).slice(-5)}`;
-        const pnr = `PNR-${Math.random().toString(36).toUpperCase().slice(2, 8)}`;
+        const bookingId = `INST${Date.now()}`;
+        const customerId = `CX-${String(Date.now()).slice(-5)}`;
+        const enteredPnr = airlinePnrs.find(r => r && r.pnr && r.pnr.trim())?.pnr?.trim();
+        const pnr = enteredPnr || `PNR-${Math.random().toString(36).toUpperCase().slice(2, 8)}`;
         const now = new Date().toISOString();
 
         const booking = {
           id: bookingId,
+          refNo: bookingId,
           customerId,
           pnr,
-          status: 'Confirmed',
+          status: 'Pending',
           createdAt: now,
           updatedAt: now,
 
@@ -851,13 +815,15 @@ const NewBooking = () => {
             serviceFee,
             actualCost,
             actualMCO,
-            totalCost: sidebarTotalCost,
+            totalCost: chargedTotal,
             currency: 'USD',
           },
 
           // Payment
           payment: {
             method: formData.paymentMethod,
+            paymentType: formData.paymentType || '',
+            paymentMode: formData.paymentMode || '',
             cardName: formData.cardName || '',
             cardType: getCardTypeName(detectCardType(formData.cardNumber)) || '',
             cardLast4: formData.cardNumber ? formData.cardNumber.replace(/\s/g, '').slice(-4) : '',
@@ -869,9 +835,10 @@ const NewBooking = () => {
           merchantName: formData.merchantName,
           vendorCode: formData.vendorCode,
           descriptor: formData.descriptor || '',
+          gateway: formData.gateway || '',
           bookingSource: formData.bookingSource || '',
           shift: formData.shift || '',
-          proposalType: formData.proposalType || '',
+          service: normalizeService(formData.service),
 
           // Airline & PNR rows (entered on this form)
           airlinePnrs: airlinePnrs
@@ -897,11 +864,48 @@ const NewBooking = () => {
           // Remark
           remark: formData.remark || '',
           authorizationEmailSentAt: authEmailSentAt || null,
+
+          // ── Flat search-friendly fields ─────────────────────────────────
+          // Duplicated at top level so SearchService can filter on them
+          // without re-running the normalizer every time.
+          cxId: customerId,
+          name: (() => {
+            const p = formData.passengers[0];
+            if (!p) return '';
+            return `${p.title || ''} ${p.firstName || ''} ${p.middleName ? p.middleName + ' ' : ''}${p.lastName || ''}`.trim();
+          })(),
+          passengerName: (() => {
+            // All passenger full names joined so passenger-name filter works for any pax
+            return formData.passengers
+              .map(p => `${p.firstName || ''} ${p.middleName ? p.middleName + ' ' : ''}${p.lastName || ''}`.trim())
+              .filter(Boolean)
+              .join(', ');
+          })(),
+          phone: (() => {
+            const p = formData.passengers[0];
+            if (!p) return formData.billingPhone || '';
+            const raw = `${p.phoneCode || ''} ${p.phone || ''}`.trim();
+            return raw || formData.billingPhone || '';
+          })(),
+          altPhone: (() => {
+            // Collect all alt-phones across passengers
+            const paxAlts = formData.passengers
+              .map(p => p.altPhone ? `${p.altPhoneCode || ''} ${p.altPhone}`.trim() : '')
+              .filter(Boolean);
+            return paxAlts.join(', ') || '';
+          })(),
+          email: formData.passengers[0]?.email || formData.billingEmail || '',
+          agent: formData.shift || formData.bookingSource || 'Direct',
+          saleBy: formData.shift || formData.bookingSource || 'Direct',
+          date: now.slice(0, 10),
+          saleDate: now.slice(0, 10),
+          amount: chargedTotal > 0 ? `$${chargedTotal.toFixed(2)}` : '',
         };
 
-        // Fetch existing bookings and append
-        const existing = await fetchBookings() || [];
-        await saveBookings([...existing, booking]);
+        // Upsert this single booking directly — no fetch required.
+        const saveResult = await saveBooking(booking);
+        const cloudFailed = !(saveResult && saveResult.remote);
+        setCloudSaveFailed(cloudFailed);
 
         // Keep the draft, but mark it as completed — reloading /new-booking
         // reopens this confirmation instead of an empty form.
@@ -912,9 +916,11 @@ const NewBooking = () => {
           currentStep: 4,
           returnStep: null,
           savedBooking: completedBooking,
+          cloudSaveFailed: cloudFailed,
         }));
       } catch (err) {
         console.error('Failed to save booking:', err);
+        setCloudSaveFailed(true);
         // Still advance even if save fails — user sees confirmation
         setCurrentStep(4);
       } finally {
@@ -938,6 +944,7 @@ const NewBooking = () => {
   // effect then overwrites the stored draft with this empty state.
   const startNewBooking = () => {
     setSavedBooking(null);
+    setCloudSaveFailed(false);
     setAuthEmailSentAt(null);
     setTripType('Round Trip');
     setReturnStep(null);
@@ -964,7 +971,7 @@ const NewBooking = () => {
     }
     setSendingAuthEmail(true);
     try {
-      const { subject, html, text } = buildAuthorizationEmail({ formData, tripType, totalCost, airlinePnrs });
+      const { subject, html, text } = buildAuthorizationEmail({ formData, tripType, totalCost, mco: actualMCO, airlinePnrs });
       await sendSmtpEmail({ to: authEmailRecipient, subject, html, text });
       setAuthEmailSentAt(new Date().toISOString());
     } catch (err) {
@@ -975,7 +982,7 @@ const NewBooking = () => {
   };
 
   const handleCopyEmailHtml = async () => {
-    const { bodyHtml } = buildAuthorizationEmail({ formData, tripType, totalCost, airlinePnrs });
+    const { bodyHtml } = buildAuthorizationEmail({ formData, tripType, totalCost, mco: actualMCO, airlinePnrs });
     try {
       await navigator.clipboard.writeText(bodyHtml);
     } catch {
@@ -1038,10 +1045,15 @@ const NewBooking = () => {
   const taxes = formData.customTaxes !== null ? formData.customTaxes : fare * 0.15; // 15% mock tax or custom
   const serviceFee = formData.customServiceFee !== null ? formData.customServiceFee : 20.00;
   const baseMCO = 20.00;
-  const actualMCO = formData.customActualMCO !== null ? formData.customActualMCO : baseMCO;
+  const mco = formData.customMCO !== null && formData.customMCO !== undefined ? formData.customMCO : baseMCO;
+  const actualMCO = formData.customActualMCO !== null ? formData.customActualMCO : mco;
   const actualCost = formData.customActualCost !== null ? formData.customActualCost : (fare + taxes);
-  const totalCost = baseFare > 0 ? actualCost + serviceFee : 0;
-  const sidebarTotalCost = actualCost + actualMCO;
+  const computedTotalCost = baseFare > 0 ? actualCost + serviceFee : 0;
+  const totalCost = formData.customTotalCost !== null && formData.customTotalCost !== undefined
+    ? formData.customTotalCost
+    : computedTotalCost;
+  // What the customer actually authorizes: the booking total plus the MCO.
+  const chargedTotal = totalCost + actualMCO;
 
   const filled = (v) => String(v ?? '').trim().length > 0;
   const emailOk = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v ?? '').trim());
@@ -1060,9 +1072,9 @@ const NewBooking = () => {
     !filled(formData.merchantName) && 'Merchant Name',
     !filled(formData.vendorCode) && 'Vendor Code',
     !filled(formData.descriptor) && 'Descriptor',
+    !filled(formData.gateway) && 'Gateway',
     !filled(formData.bookingSource) && 'Booking Source',
     !filled(formData.shift) && 'Shift',
-    !filled(formData.proposalType) && 'Proposal Type',
     ...formData.passengers.map((p, i) =>
       (filled(p.title) && filled(p.dob) && filled(p.firstName) &&
         filled(p.lastName) && emailOk(p.email) && filled(p.gender) && filled(p.passengerType))
@@ -1465,12 +1477,14 @@ const NewBooking = () => {
                 {/* Agency Details column */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', minWidth: 0 }}>
                   {[
-                    { label: 'Merchant Name', field: 'merchantName', type: 'text', placeholder: 'Enter Merchant Name' },
+                    { label: 'Service', field: 'service', type: 'select', placeholder: 'Select Service', options: SERVICE_TYPES },
+                    { label: 'Merchant Name', field: 'merchantName', type: 'select', placeholder: 'Select Merchant Name', options: MERCHANT_OPTIONS },
                     { label: 'Vendor Code', field: 'vendorCode', type: 'select', placeholder: 'Select Vendor Code', options: vendorCodeOptions },
                     { label: 'Descriptor', field: 'descriptor', type: 'select', placeholder: 'Select Descriptor', options: descriptorOptions },
+                    { label: 'Gateway', field: 'gateway', type: 'select', placeholder: 'Select Gateway', options: gatewayOptions },
                     { label: 'Booking Source', field: 'bookingSource', type: 'select', placeholder: 'Select Booking Source', options: ['Website', 'Phone', 'Walk-in', 'Travel Agent', 'OTA'] },
                     { label: 'Shift', field: 'shift', type: 'select', placeholder: 'Select Shift', options: ['Morning', 'Afternoon', 'Evening', 'Night'] },
-                    { label: 'Proposal Type', field: 'proposalType', type: 'select', placeholder: 'Select Proposal Type', options: ['Standard', 'Special Fare', 'Corporate', 'Group Booking'] },
+                    { label: 'Payment By', field: 'paymentBy', type: 'select', placeholder: 'Select Payment By', options: ['Customer Card', 'Company Card'] },
                   ].map(f => (
                     <div key={f.field} style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                       <label style={{ width: '110px', flexShrink: 0, fontWeight: 700, fontSize: '0.8rem', color: 'var(--text-primary)' }}>{f.label}</label>
@@ -1502,6 +1516,40 @@ const NewBooking = () => {
             </div>
 
             </div>{/* end PNR Entry section */}
+
+            {/* ═══════════════════════════════════════════════════════════
+                SEARCH RESULTS — one card per flight combination
+            ═══════════════════════════════════════════════════════════ */}
+            {['outbound', 'return'].some(dir => searchPhase[dir] !== 'idle') && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                {['outbound', 'return'].filter(dir => searchPhase[dir] !== 'idle').map(dir => (
+                  <div key={dir}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.65rem', fontSize: '0.8rem', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                      {dir === 'outbound' ? <PlaneTakeoff size={15} /> : <PlaneLanding size={15} />}
+                      {dir === 'outbound' ? 'Outbound Flight' : 'Inbound Flight'} — Search Results
+                    </div>
+                    <SearchSummary
+                      tripType={tripType}
+                      direction={dir === 'outbound' ? 'Outbound' : 'Inbound'}
+                      query={flightCodeInput[dir].trim()}
+                      from={dir === 'outbound' ? formData.fromAirport : formData.toAirport}
+                      to={dir === 'outbound' ? formData.toAirport : formData.fromAirport}
+                      cabin={formData.cabinClass}
+                      passengers={formData.passengersCount}
+                    />
+                    <SearchResultsList
+                      phase={searchPhase[dir]}
+                      results={searchResults[dir]}
+                      error={searchErrorMsg[dir]}
+                      query={flightCodeInput[dir].trim()}
+                      selectedId={selectedResultId[dir]}
+                      onSelect={(combination) => selectCombination(dir, combination)}
+                      onRetry={() => lookupFlightCode(dir)}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Passenger Details */}
             <div style={{ background: 'white', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)', overflow: 'hidden', boxShadow: 'var(--shadow-sm)' }}>
@@ -1641,11 +1689,24 @@ const NewBooking = () => {
                   <CreditCard size={20} style={{ color: '#805ad5' }} /> Payment Details
                 </h2>
                 <div style={{ display: 'flex', background: 'var(--bg-base)', padding: '0.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-                  <button onClick={() => setFormData({...formData, paymentMethod: 'Customer Card'})} style={{ padding: '0.4rem 1rem', borderRadius: 'var(--radius-sm)', border: 'none', background: formData.paymentMethod !== 'Company Card' ? 'white' : 'transparent', color: formData.paymentMethod !== 'Company Card' ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', boxShadow: formData.paymentMethod !== 'Company Card' ? 'var(--shadow-sm)' : 'none' }}>Customer Card</button>
-                  <button onClick={() => setFormData({...formData, paymentMethod: 'Company Card'})} style={{ padding: '0.4rem 1rem', borderRadius: 'var(--radius-sm)', border: 'none', background: formData.paymentMethod === 'Company Card' ? 'white' : 'transparent', color: formData.paymentMethod === 'Company Card' ? 'var(--text-primary)' : 'var(--text-muted)', fontWeight: 600, cursor: 'pointer', boxShadow: formData.paymentMethod === 'Company Card' ? 'var(--shadow-sm)' : 'none' }}>Company Card</button>
+                  
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Payment Type</label>
+                  <select value={formData.paymentType || ''} onChange={(e) => setFormData({...formData, paymentType: e.target.value})} style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'white', boxSizing: 'border-box' }}>
+                    <option value="">Select Payment Type</option>
+                    {paymentTypeOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Payment Mode</label>
+                  <select value={formData.paymentMode || ''} onChange={(e) => setFormData({...formData, paymentMode: e.target.value})} style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'white', boxSizing: 'border-box' }}>
+                    <option value="">Select Payment Mode</option>
+                    {paymentModeOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Name on Card</label>
                   <input type="text" value={formData.cardName || ''} onChange={(e) => setFormData({...formData, cardName: e.target.value})} placeholder="As shown on card" style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none', boxSizing: 'border-box' }} />
@@ -1692,12 +1753,38 @@ const NewBooking = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
                   <div style={{ background: 'var(--bg-base)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1.25rem' }}>
                     <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>Total Cost</div>
-                    <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)' }}>${totalCost.toFixed(2)}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={formData.customTotalCost !== null ? formData.customTotalCost : (baseFare > 0 ? computedTotalCost.toFixed(2) : '')}
+                        onChange={(e) => setFormData({...formData, customTotalCost: e.target.value === '' ? null : parseFloat(e.target.value) || 0})}
+                        style={{ width: '100%', padding: '0.35rem 0.5rem', border: '1.5px solid var(--border-color)', borderRadius: 'var(--radius-sm)', fontWeight: 700, fontSize: '1.2rem', outline: 'none', background: 'white', color: 'var(--text-primary)', transition: 'border-color 0.15s', boxSizing: 'border-box' }}
+                        onFocus={e => e.target.style.borderColor = 'var(--primary-accent)'}
+                        onBlur={e => e.target.style.borderColor = 'var(--border-color)'}
+                      />
+                    </div>
                   </div>
 
                   <div style={{ background: 'var(--bg-base)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1.25rem' }}>
                     <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.5rem' }}>MCO</div>
-                    <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)' }}>${baseMCO.toFixed(2)}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                      <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={formData.customMCO !== null ? formData.customMCO : mco.toFixed(2)}
+                        onChange={(e) => setFormData({...formData, customMCO: e.target.value === '' ? null : parseFloat(e.target.value) || 0})}
+                        style={{ width: '100%', padding: '0.35rem 0.5rem', border: '1.5px solid var(--border-color)', borderRadius: 'var(--radius-sm)', fontWeight: 700, fontSize: '1.2rem', outline: 'none', background: 'white', color: 'var(--text-primary)', transition: 'border-color 0.15s', boxSizing: 'border-box' }}
+                        onFocus={e => e.target.style.borderColor = 'var(--primary-accent)'}
+                        onBlur={e => e.target.style.borderColor = 'var(--border-color)'}
+                      />
+                    </div>
                   </div>
 
                   <div style={{ background: 'var(--bg-base)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1.25rem' }}>
@@ -1764,9 +1851,7 @@ const NewBooking = () => {
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Merchant Name</label>
                   <select value={formData.merchantName || ''} onChange={(e) => setFormData({...formData, merchantName: e.target.value})} style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'white' }}>
                     <option value="">Select Merchant</option>
-                    <option value="ZSM Travel">ZSM Travel</option>
-                    <option value="Global Travels">Global Travels</option>
-                    <option value="Aero Tickets">Aero Tickets</option>
+                    {MERCHANT_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1802,7 +1887,7 @@ const NewBooking = () => {
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Template Subject</label>
                   <div style={{ padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-base)', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {buildAuthorizationEmail({ formData, tripType, totalCost, airlinePnrs }).subject}
+                    {buildAuthorizationEmail({ formData, tripType, totalCost, mco: actualMCO, airlinePnrs }).subject}
                   </div>
                 </div>
               </div>
@@ -1811,7 +1896,7 @@ const NewBooking = () => {
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>Email Template Preview</label>
                 <iframe
                   title="Authorization email template preview"
-                  srcDoc={buildAuthorizationEmail({ formData, tripType, totalCost, airlinePnrs }).html}
+                  srcDoc={buildAuthorizationEmail({ formData, tripType, totalCost, mco: actualMCO, airlinePnrs }).html}
                   sandbox="allow-same-origin"
                   style={{ width: '100%', height: '520px', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: 'white' }}
                 />
@@ -1915,6 +2000,7 @@ const NewBooking = () => {
                 <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text-primary)' }}>Payment</div>
                 <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
                   <div><span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{formData.paymentMethod || 'Customer Card'}</span></div>
+                  <div>{formData.paymentType || 'Single Charge'} · {formData.paymentMode || 'CX Card'}</div>
                   <div>Card ending in •••• {cardLast4 || '----'}</div>
                 </div>
               </div>
@@ -1929,9 +2015,7 @@ const NewBooking = () => {
                     <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.35rem', textTransform: 'uppercase' }}>Merchant</label>
                     <select value={formData.merchantName || ''} onChange={(e) => setFormData({...formData, merchantName: e.target.value})} style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', outline: 'none', backgroundColor: 'white', fontSize: '0.85rem' }}>
                       <option value="">Select Merchant</option>
-                      <option value="ZSM Travel">ZSM Travel</option>
-                      <option value="Global Travels">Global Travels</option>
-                      <option value="Aero Tickets">Aero Tickets</option>
+                      {MERCHANT_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                   </div>
                   <div>
@@ -1971,13 +2055,6 @@ const NewBooking = () => {
                       <input type="number" step="0.01" value={formData.customTaxes !== null ? formData.customTaxes : taxes.toFixed(2)} onChange={(e) => setFormData({...formData, customTaxes: e.target.value === '' ? null : parseFloat(e.target.value) || 0})} style={{ width: '80px', padding: '0.25rem 0.5rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', textAlign: 'right', fontWeight: 600, outline: 'none' }} />
                     </div>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', alignItems: 'center' }}>
-                    <span style={{ color: 'var(--text-secondary)' }}>ZSM Service Fee</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                      <span style={{ fontWeight: 600 }}>$</span>
-                      <input type="number" step="0.01" value={formData.customServiceFee !== null ? formData.customServiceFee : serviceFee.toFixed(2)} onChange={(e) => setFormData({...formData, customServiceFee: e.target.value === '' ? null : parseFloat(e.target.value) || 0})} style={{ width: '80px', padding: '0.25rem 0.5rem', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', textAlign: 'right', fontWeight: 600, outline: 'none' }} />
-                    </div>
-                  </div>
                 </div>
 
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center' }}>
@@ -1996,12 +2073,38 @@ const NewBooking = () => {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                     <div style={{ background: 'var(--bg-base)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem' }}>
                       <div style={{ fontSize: '0.68rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.35rem' }}>Total Cost</div>
-                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-primary)' }}>${totalCost.toFixed(2)}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          value={formData.customTotalCost !== null ? formData.customTotalCost : (baseFare > 0 ? computedTotalCost.toFixed(2) : '')}
+                          onChange={(e) => setFormData({...formData, customTotalCost: e.target.value === '' ? null : parseFloat(e.target.value) || 0})}
+                          style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1.5px solid var(--border-color)', borderRadius: 'var(--radius-sm)', fontWeight: 700, fontSize: '1rem', outline: 'none', background: 'white', color: 'var(--text-primary)', transition: 'border-color 0.15s', boxSizing: 'border-box' }}
+                          onFocus={e => e.target.style.borderColor = 'var(--primary-accent)'}
+                          onBlur={e => e.target.style.borderColor = 'var(--border-color)'}
+                        />
+                      </div>
                     </div>
 
                     <div style={{ background: 'var(--bg-base)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem' }}>
                       <div style={{ fontSize: '0.68rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '0.35rem' }}>MCO</div>
-                      <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-primary)' }}>${baseMCO.toFixed(2)}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                        <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          value={formData.customMCO !== null ? formData.customMCO : mco.toFixed(2)}
+                          onChange={(e) => setFormData({...formData, customMCO: e.target.value === '' ? null : parseFloat(e.target.value) || 0})}
+                          style={{ width: '100%', padding: '0.3rem 0.5rem', border: '1.5px solid var(--border-color)', borderRadius: 'var(--radius-sm)', fontWeight: 700, fontSize: '1rem', outline: 'none', background: 'white', color: 'var(--text-primary)', transition: 'border-color 0.15s', boxSizing: 'border-box' }}
+                          onFocus={e => e.target.style.borderColor = 'var(--primary-accent)'}
+                          onBlur={e => e.target.style.borderColor = 'var(--border-color)'}
+                        />
+                      </div>
                     </div>
 
                     <div style={{ background: 'var(--bg-base)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '1rem' }}>
@@ -2073,6 +2176,11 @@ const NewBooking = () => {
             </div>
             
             <h2 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '1rem' }}>Booking Pending!</h2>
+            {cloudSaveFailed && (
+              <div style={{ maxWidth: '600px', margin: '0 auto 1.5rem', padding: '0.9rem 1.1rem', borderRadius: 'var(--radius-md)', border: '1px solid #f6ad55', backgroundColor: '#fffaf0', color: '#c05621', fontSize: '0.9rem', textAlign: 'left', fontWeight: 600 }}>
+                Not saved to Supabase — the cloud database is unreachable, so this booking is stored in this browser only. It will not appear in Search until it is saved again.
+              </div>
+            )}
             <p style={{ fontSize: '1.125rem', color: 'var(--text-secondary)', marginBottom: '3rem', maxWidth: '600px', margin: '0 auto 3rem' }}>
               A Customer ID and Booking ID have been generated. The booking is currently pending. After getting email confirmation from the Customer, the Credit Card will be charged.
               <br/><br/>
@@ -2130,6 +2238,11 @@ const NewBooking = () => {
                 {savedBooking?.id && (
                   <button onClick={() => navigate(`/booking/${savedBooking.id}`)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--primary-accent)', color: 'white', border: 'none', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
                     <ExternalLink size={18} /> View Booking & Signature Status
+                  </button>
+                )}
+                {savedBooking?.id && (
+                  <button onClick={() => navigate(`/search?bookingId=${encodeURIComponent(savedBooking.id)}`)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'white', color: 'var(--text-primary)', border: '1px solid var(--border-color)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
+                    <Search size={18} /> Find in Bookings
                   </button>
                 )}
                 <button onClick={startNewBooking} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'white', color: 'var(--text-primary)', border: '1px solid var(--border-color)', padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>
@@ -2311,7 +2424,7 @@ const NewBooking = () => {
                   onClick={() => {
                     setReturnStep(null);
                     setCurrentStep(1);
-                    setFormData({...formData, outboundFlight: null, inboundFlight: null, itineraryDetails: {}, paymentMethod: 'Customer Card', cardNumber: '', expiryDate: '', cvv: '', paymentAgreed: false, customFare: null, customTaxes: null, customServiceFee: null, customActualCost: null, customActualMCO: null, merchantName: '', vendorCode: '', passengersCount: 1, passengers: [{ title: 'Mr', passengerType: 'Adult', firstName: '', middleName: '', lastName: '', dob: '', gender: 'Male', phoneCode: '+1', phone: '', altPhoneCode: '+1', altPhone: '', email: '', eTicket: '', carryOn: '1 Bag (Included)', checkInBag: 'None', insurance: 'None' }]});
+                    setFormData({...formData, outboundFlight: null, inboundFlight: null, itineraryDetails: {}, paymentMethod: 'Customer Card', cardNumber: '', expiryDate: '', cvv: '', paymentAgreed: false, customFare: null, customTaxes: null, customServiceFee: null, customActualCost: null, customActualMCO: null, customTotalCost: null, customMCO: null, merchantName: '', vendorCode: '', passengersCount: 1, passengers: [{ title: 'Mr', passengerType: 'Adult', firstName: '', middleName: '', lastName: '', dob: '', gender: 'Male', phoneCode: '+1', phone: '', altPhoneCode: '+1', altPhone: '', email: '', eTicket: '', carryOn: '1 Bag (Included)', checkInBag: 'None', insurance: 'None' }]});
                     setCardErrors({ cardNumber: '', expiryDate: '', cvv: '' });
                     setCardTouched({ cardNumber: false, expiryDate: false, cvv: false });
                     setAuthEmailSentAt(null);

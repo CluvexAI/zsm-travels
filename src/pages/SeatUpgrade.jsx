@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { usePrefillBookingSearch } from '../utils/usePrefillBookingSearch';
 import { Search, X, Star, AlertCircle, Shield } from 'lucide-react';
 
 const mockReservations = [
@@ -42,6 +43,7 @@ const SeatUpgrade = () => {
     agent: '', bookingStatus: 'All Statuses', customerAltNumber: '', passengerName: '',
     fromDate: '', toDate: '', upgradeStatus: 'All Statuses'
   });
+  usePrefillBookingSearch(setSearchFilters);
   
   const [searchResults, setSearchResults] = useState([]);
   const [hasSearched, setHasSearched] = useState(false);

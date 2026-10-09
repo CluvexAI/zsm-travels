@@ -16,25 +16,53 @@ const getBookingInfo = (formData, airlinePnrs) => {
   return { pnr, airlineConfirmation, cardLast4 };
 };
 
-const getTotals = (formData, totalCost) => {
-  const total = typeof totalCost === 'number' ? totalCost : 0;
+const getTotals = (formData, totalCost, mco) => {
+  const base = typeof totalCost === 'number' ? totalCost : 0;
+  const mcoAmount = typeof mco === 'number' ? mco : 0;
+  const total = base + mcoAmount;
   return {
     total,
+    mco: mcoAmount,
+    mcoStr: mcoAmount.toFixed(2),
     totalStr: total.toFixed(2),
+    // Bracket breakdown next to the charged amount: (USD base + USD MCO).
+    breakdownStr: mcoAmount > 0
+      ? `(USD ${base.toFixed(2)} + USD ${mcoAmount.toFixed(2)})`
+      : `(USD ${total.toFixed(2)})`,
     chargeDate: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
   };
 };
 
+const dayOfWeek = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const date = iso
+    ? new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]))
+    : new Date(text);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-US', { weekday: 'short' });
+};
+
+// Time + day + date of arrival, e.g. "01:45 PM Wed, Oct 15, 2026".
+const arriveValue = (f) => {
+  const time = f.arrTime || f.arrivalTime || '';
+  const date = f.arrivalDate || f.date || '';
+  const day = dayOfWeek(date);
+  const dateLabel = day && date ? `${day}, ${date}` : date;
+  return [time, dateLabel].filter(Boolean).join(' ') || '—';
+};
+
 const flightRowValues = (f) => f ? [
-  f.airline || '—',
+  [f.airline, f.flightCode || f.id].filter(Boolean).join(' ') || '—',
   [f.date, f.time].filter(Boolean).join(' ') || '—',
   f.route || f.origin || '—',
-  f.flightCode || f.id || '—',
+  arriveValue(f),
   f.dest || f.destination || '—',
   f.duration || '—',
 ] : ['—', '—', '—', '—', '—', '—'];
 
-const FLIGHT_HEADERS = ['Airline', 'Depart', 'From', 'Airline', 'To', 'Duration'];
+const FLIGHT_HEADERS = ['Airline', 'Depart', 'From', 'Arrive', 'To', 'Duration'];
 const PAX_HEADERS = ['PASSENGER NAME', 'DOB', 'E-TICKET NO.', 'GENDER', 'SEAT CARRY ON', 'CHECK ON'];
 
 const buildFlightTableHtml = (title, f) => {
@@ -73,11 +101,11 @@ const passengerName = (pax) => [pax.title, pax.firstName, pax.middleName, pax.la
 const greetingName = (pax) => [pax.firstName, pax.lastName].filter(Boolean).join(' ').trim() || 'John Smith';
 
 // Body fragment — fits directly inside an email client's message body (no DOCTYPE/html/body wrapper).
-export const buildAuthorizationEmailBodyHtml = ({ formData, tripType, totalCost, airlinePnrs }) => {
+export const buildAuthorizationEmailBodyHtml = ({ formData, tripType, totalCost, mco, airlinePnrs }) => {
   const pax = formData.passengers[0] || {};
   const name = greetingName(pax);
   const { pnr, airlineConfirmation, cardLast4 } = getBookingInfo(formData, airlinePnrs);
-  const { totalStr, chargeDate } = getTotals(formData, totalCost);
+  const { totalStr, breakdownStr, chargeDate } = getTotals(formData, totalCost, mco);
 
   return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:760px; margin:0 auto; background:#ffffff; font-family:Arial, Helvetica, sans-serif; color:#111; border-collapse:collapse;">
     <tr>
@@ -108,7 +136,7 @@ export const buildAuthorizationEmailBodyHtml = ({ formData, tripType, totalCost,
           Kindly authorize Instaflight Travel / Instaflight Travel Solutions LLC to debit your Master card ending with (${esc(cardLast4)}) for a total of USD ${esc(totalStr)} against the travel plan for passengers mentioned above.
         </p>
         <p style="font-size:15px; line-height:1.6; margin:0 0 14px;">
-          Total Amount to be Charged on Card Ending With (${esc(cardLast4)}): USD ${esc(totalStr)} (USD ${esc(totalStr)}) dated ${esc(chargeDate)}.
+          Total Amount to be Charged on Card Ending With (${esc(cardLast4)}): USD ${esc(totalStr)} ${esc(breakdownStr)} dated ${esc(chargeDate)}.
         </p>
         <p style="font-size:15px; line-height:1.6; margin:0 0 24px;">
           Your credit/debit card may be charged in split payment in the name of INSTAFLIGHT TRAVEL &amp; INSTAFIGHT TRAVEL SOLUTIONS LLC but the total amount will remain the same.
@@ -138,8 +166,14 @@ export const buildAuthorizationEmailBodyHtml = ({ formData, tripType, totalCost,
                   <td style="padding-right:10px; vertical-align:middle;">
                     <span style="display:inline-block; width:34px; height:34px; line-height:34px; border-radius:50%; background:#ffffff; color:#1f2937; font-size:16px; text-align:center;">&#9993;</span>
                   </td>
+                  <td style="vertical-align:middle; padding-right:26px;">
+                    <span style="color:#ffffff; font-size:14px; line-height:1.5; white-space:nowrap;">info@instaflight.com</span>
+                  </td>
+                  <td style="padding-right:10px; vertical-align:middle;">
+                    <span style="display:inline-block; width:34px; height:34px; line-height:34px; border-radius:50%; background:#ffffff; color:#1f2937; font-size:16px; text-align:center;">&#127760;</span>
+                  </td>
                   <td style="vertical-align:middle; text-align:left;">
-                    <span style="color:#ffffff; font-size:14px; line-height:1.5;">info@instaflight.com<br/>www.instaflight.com</span>
+                    <span style="color:#ffffff; font-size:14px; line-height:1.5; white-space:nowrap;">www.instaflight.com</span>
                   </td>
                 </tr>
               </table>
@@ -159,11 +193,11 @@ ${buildAuthorizationEmailBodyHtml(args)}
 </body>
 </html>`;
 
-export const buildAuthorizationEmailText = ({ formData, tripType, totalCost, airlinePnrs }) => {
+export const buildAuthorizationEmailText = ({ formData, tripType, totalCost, mco, airlinePnrs }) => {
   const pax = formData.passengers[0] || {};
   const name = greetingName(pax);
   const { pnr, airlineConfirmation, cardLast4 } = getBookingInfo(formData, airlinePnrs);
-  const { totalStr, chargeDate } = getTotals(formData, totalCost);
+  const { totalStr, breakdownStr, chargeDate } = getTotals(formData, totalCost, mco);
 
   const flightLines = (title, f) => {
     const v = flightRowValues(f);
@@ -201,7 +235,7 @@ export const buildAuthorizationEmailText = ({ formData, tripType, totalCost, air
     '',
     `Kindly authorize Instaflight Travel / Instaflight Travel Solutions LLC to debit your Master card ending with (${cardLast4}) for a total of USD ${totalStr} against the travel plan for passengers mentioned above.`,
     '',
-    `Total Amount to be Charged on Card Ending With (${cardLast4}): USD ${totalStr} (USD ${totalStr}) dated ${chargeDate}.`,
+    `Total Amount to be Charged on Card Ending With (${cardLast4}): USD ${totalStr} ${breakdownStr} dated ${chargeDate}.`,
     '',
     'Your credit/debit card may be charged in split payment in the name of INSTAFLIGHT TRAVEL & INSTAFIGHT TRAVEL SOLUTIONS LLC but the total amount will remain the same.',
     '',
@@ -215,15 +249,15 @@ export const buildAuthorizationEmailText = ({ formData, tripType, totalCost, air
   ].join('\n');
 };
 
-export const buildAuthorizationEmail = ({ formData, tripType, totalCost, airlinePnrs }) => ({
+export const buildAuthorizationEmail = ({ formData, tripType, totalCost, mco, airlinePnrs }) => ({
   to: (formData.passengers?.[0]?.email || formData.billingEmail || '').trim(),
   subject: AUTHORIZATION_EMAIL_SUBJECT,
-  text: buildAuthorizationEmailText({ formData, tripType, totalCost, airlinePnrs }),
-  html: buildAuthorizationEmailHtml({ formData, tripType, totalCost, airlinePnrs }),
-  bodyHtml: buildAuthorizationEmailBodyHtml({ formData, tripType, totalCost, airlinePnrs }),
+  text: buildAuthorizationEmailText({ formData, tripType, totalCost, mco, airlinePnrs }),
+  html: buildAuthorizationEmailHtml({ formData, tripType, totalCost, mco, airlinePnrs }),
+  bodyHtml: buildAuthorizationEmailBodyHtml({ formData, tripType, totalCost, mco, airlinePnrs }),
 });
 
-export const buildAuthorizationMailto = ({ formData, tripType, totalCost, airlinePnrs }) => {
-  const { to, subject, text } = buildAuthorizationEmail({ formData, tripType, totalCost, airlinePnrs });
+export const buildAuthorizationMailto = ({ formData, tripType, totalCost, mco, airlinePnrs }) => {
+  const { to, subject, text } = buildAuthorizationEmail({ formData, tripType, totalCost, mco, airlinePnrs });
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
 };

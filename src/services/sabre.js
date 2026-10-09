@@ -129,8 +129,9 @@ const extractSegment = (node) => {
   };
 };
 
-// Bargain Finder Max (test shopping) — filter results for the entered flight number.
-const shopFlights = async ({ from, to, departureDate, airlineCode, flightNumber, tripType }) => {
+// Bargain Finder Max (test shopping) — performs the search and returns the raw
+// response. Consumers decide how to reduce it (single match vs. all offers).
+const requestShop = async ({ from, to, departureDate, tripType }) => {
   const payload = {
     OTA_AirLowFareSearchRQ: {
       OriginDestinationInformation: [
@@ -202,7 +203,78 @@ const shopFlights = async ({ from, to, departureDate, airlineCode, flightNumber,
     throw new Error(`Sabre flight search failed (${response.status}).${detail ? ` ${detail}` : ''}`);
   }
 
-  const data = await response.json();
+  return await response.json();
+};
+
+const extractPrice = (node) => {
+  const raw = pick(node, ['TotalPrice', 'Price', 'Amount', 'BasePrice', 'adjustedPrice']);
+  if (raw === undefined) return undefined;
+  if (typeof raw === 'object') {
+    const value = pick(raw, ['Value', 'value', 'Amount', 'amount']);
+    const amount = typeof value === 'string' ? Number(String(value).replace(/[^0-9.]/g, '')) : Number(value);
+    return Number.isFinite(amount) && amount > 0 ? amount : undefined;
+  }
+  const amount = Number(String(raw).replace(/[^0-9.]/g, ''));
+  return Number.isFinite(amount) && amount > 0 ? amount : undefined;
+};
+
+const isSegmentNode = (n) =>
+  Boolean(pick(n, ['FlightNumber', 'flightNumber'])) &&
+  Boolean(pick(n, ['DepartureAirport', 'OriginLocation', 'origin']));
+
+const segmentToOffer = (node, { from, to, departureDate, airlineCode, flightNumber }) => {
+  const seg = extractSegment(node);
+  if (!seg.origin && !seg.dest) return null;
+  return {
+    pnr: `SB${Math.random().toString(36).toUpperCase().slice(2, 8)}`,
+    airline: seg.marketingCode || airlineCode || '',
+    flightCode: `${seg.marketingCode || airlineCode || ''}${seg.flightNumber || flightNumber || ''}`,
+    route: seg.origin || from,
+    dest: seg.dest || to,
+    date: toDate(seg.departureDateTime) || departureDate,
+    time: toTime(seg.departureDateTime) || '—',
+    arrTime: toTime(seg.arrivalDateTime) || '—',
+    price: extractPrice(node),
+    found: true,
+    source: 'sabre',
+  };
+};
+
+/**
+ * Search WITHOUT narrowing to a single flight number — returns every offer the
+ * shop response contains, so the results list can render multiple combinations.
+ * Offers matching the entered flight code are ordered first.
+ */
+export const searchSabreOffers = async ({ from, to, departureDate, tripType, flightCode }) => {
+  const match = String(flightCode || '').trim().toUpperCase().match(/^([A-Z]{2})(\d{1,4})$/);
+  const airlineCode = match ? match[1] : '';
+  const flightNumber = match ? match[2] : '';
+
+  const data = await requestShop({ from, to, departureDate: departureDate || searchDate(7), tripType });
+  const nodes = collectNodes(data, isSegmentNode);
+
+  const seen = new Set();
+  const offers = [];
+  for (const node of nodes) {
+    const offer = segmentToOffer(node, { from, to, departureDate, airlineCode, flightNumber });
+    if (!offer) continue;
+    const key = `${offer.flightCode}|${offer.route}|${offer.dest}|${offer.date}|${offer.time}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    offers.push(offer);
+    if (offers.length >= 12) break;
+  }
+
+  if (!offers.length) throw new Error('Sabre returned no flight segments for this search.');
+  if (flightCode) {
+    offers.sort((a, b) => Number(b.flightCode === flightCode) - Number(a.flightCode === flightCode));
+  }
+  return offers;
+};
+
+// Bargain Finder Max (test shopping) — filter results for the entered flight number.
+const shopFlights = async ({ from, to, departureDate, airlineCode, flightNumber, tripType }) => {
+  const data = await requestShop({ from, to, departureDate, tripType });
   const wantedNumber = String(flightNumber).replace(/\D/g, '');
   const segmentNodes = collectNodes(data, (n) => {
     const fn = pick(n, ['FlightNumber', 'flightNumber', 'MarketingFlightNumber']);

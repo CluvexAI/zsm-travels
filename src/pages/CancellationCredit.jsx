@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { usePrefillBookingSearch } from '../utils/usePrefillBookingSearch';
 import { AlertCircle, PlaneTakeoff, X, Check } from 'lucide-react';
 
 const mockReservations = [
@@ -46,6 +47,7 @@ const CancellationCredit = () => {
     cxId: '', bookingId: '', pnr: '', customerName: '', cxPhone: '', customerEmail: '',
     agent: '', altPhone: '', passengerName: '', fromDate: '', toDate: '', status: ''
   });
+  usePrefillBookingSearch(setFilters);
   const [searchResults, setSearchResults] = useState([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [selectedReservation, setSelectedReservation] = useState(null);

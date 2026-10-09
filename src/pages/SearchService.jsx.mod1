@@ -1,0 +1,1516 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { User, ShieldAlert, Loader2, Copy, Printer, Plane, ChevronDown, ChevronRight } from 'lucide-react';
+import { fetchBookings, saveBooking, saveBookings } from '../services/supabase';
+import { normalizeBookingsForSearch, mapBookingDetail } from '../utils/bookingNormalizer';
+import { SERVICE_TYPES, DEFAULT_SERVICE, normalizeService } from '../utils/serviceTypes';
+import { MERCHANT_OPTIONS, normalizeMerchant } from '../utils/merchantOptions';
+import { ROLES } from '../services/mockAuthService';
+
+const AIRPORT_NAMES = {
+  CMH: 'Port Columbus Intl Airport', ATL: 'Hartsfield-Jackson Intl Airport', TPA: 'Tampa Intl Airport',
+  JFK: 'John F. Kennedy Intl Airport', LAX: 'Los Angeles Intl Airport', ORD: "O'Hare Intl Airport",
+  MIA: 'Miami Intl Airport', SFO: 'San Francisco Intl Airport', SEA: 'Seattle-Tacoma Intl Airport',
+  DFW: 'Dallas/Fort Worth Intl Airport', LHR: 'London Heathrow Airport', BOS: 'Boston Logan Intl Airport',
+  IAH: 'George Bush Intercontinental Airport', LAS: 'Harry Reid Intl Airport', PHX: 'Phoenix Sky Harbor Intl Airport',
+  DEN: 'Denver Intl Airport', DCA: 'Reagan National Airport', IAD: 'Dulles Intl Airport',
+  BWI: 'Baltimore/Washington Intl Airport', PHL: 'Philadelphia Intl Airport', EWR: 'Newark Liberty Intl Airport',
+  DTW: 'Detroit Metropolitan Airport', MSP: 'Minneapolis-St. Paul Intl Airport', CLT: 'Charlotte Douglas Intl Airport',
+  AUS: 'Austin-Bergstrom Intl Airport', SAN: 'San Diego Intl Airport', TUS: 'Tucson Intl Airport',
+  PDX: 'Portland Intl Airport', SLC: 'Salt Lake City Intl Airport', STL: 'St. Louis Lambert Intl Airport',
+  CLE: 'Cleveland Hopkins Intl Airport', CVG: 'Cincinnati/Northern Kentucky Intl Airport',
+  IND: 'Indianapolis Intl Airport', BNA: 'Nashville Intl Airport', RDU: 'Raleigh-Durham Intl Airport',
+  FLL: 'Fort Lauderdale-Hollywood Intl Airport', MCO: 'Orlando Intl Airport', MSY: 'Louis Armstrong New Orleans Intl Airport',
+  HNL: 'Daniel K. Inouye Intl Airport', ANC: 'Ted Stevens Anchorage Intl Airport',
+};
+
+const airportName = (code) => (code && (AIRPORT_NAMES[code] || AIRPORT_NAMES[String(code).toUpperCase()])) || '';
+
+const AIRLINE_MARKS = {
+  delta: '#e01933', american: '#0078d2', united: '#005daa', alaska: '#015a5b',
+  british: '#2e5c9e', jetblue: '#00205b', southwest: '#304cb2', spirit: '#f9b612',
+};
+
+const airlineColor = (airline) => {
+  const key = String(airline || '').toLowerCase().split(' ')[0];
+  return AIRLINE_MARKS[key] || '#a0aec0';
+};
+
+const AirlineMark = ({ airline }) => (
+  <svg width="30" height="26" viewBox="0 0 30 26" aria-hidden="true" style={{ flexShrink: 0 }}>
+    <path d="M15 2 L28 24 L2 24 Z" fill={airlineColor(airline)} />
+  </svg>
+);
+
+const warningFor = (booking) =>
+  booking.status === 'Cancelled' || booking.paymentStatus === 'Refunded' ? 'Review' : '—';
+
+const mcoFor = (booking) => {
+  const value = booking.pricing?.actualMCO ?? booking.actualMCO ?? booking.mco;
+  return value === undefined || value === null || value === '' ? '—' : `$${Number(value).toFixed(2)}`;
+};
+
+const BOOKING_STATUSES = ['Pending', 'Charged', 'Decline', 'Refunded', 'Partial Refund', 'Chargeback', 'Cancelled'];
+
+// Rows saved before the status vocabulary changed; map them onto the list above
+// so the controlled dropdown never renders blank.
+const LEGACY_STATUS_MAP = {
+  Confirmed: 'Charged',
+  'Booking Confirmed': 'Charged',
+  Completed: 'Charged',
+  'On Hold': 'Pending',
+};
+
+const normalizeStatus = (status) => {
+  const value = String(status || '').trim();
+  if (BOOKING_STATUSES.includes(value)) return value;
+  return LEGACY_STATUS_MAP[value] || 'Pending';
+};
+
+const WORK_STATUSES = ['In Progress', 'Completed', 'WIP', 'Future WIP'];
+const QUALITY_AUDIT_STATUSES = ['Pass Settle', 'Fail Settle', 'Doubtful', 'Fail Void'];
+const CRM_AUDIT_STATUSES = ['Pending', 'Pass', 'Fail'];
+const CB_STATUSES = ['CB RECEIVED', 'CB ETHOCA RECEIVED', 'CB VERIFI'];
+const PAYMENT_STATUSES = ['Pending', 'Charged'];
+const LEGACY_PAYMENT_MAP = { Paid: 'Charged', 'Partially Paid': 'Pending', Refunded: 'Pending' };
+const MERCHANTS = MERCHANT_OPTIONS;
+
+// Values outside the list would leave a controlled <select> blank, so map
+// retired spellings first and otherwise fall back to the first option.
+const normalizeOption = (value, options, legacy = {}) =>
+  (options.includes(value) ? value : (legacy[value] || options[0]));
+
+const badgeClass = (status) =>
+  `badge ${
+    status === 'Charged' || status === 'Booking Confirmed' || status === 'Completed' ? 'badge-success' :
+    status === 'Refunded' ? 'badge-primary' :
+    status === 'Pending' || status === 'On Hold' || status === 'Partial Refund' ? 'badge-warning' : 'badge-danger'
+  }`;
+
+const formatDate = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+};
+
+const renderBookingDetailCard = (detail, canViewPII = false) => {
+  const { header, airlinePnr, card, costing, costingHistory, passengers, billingAddress, availableActions } = detail;
+  const primaryColor = 'var(--text-primary)';
+  const mutedColor = 'mutedColorVar';
+
+  // Header row
+  const headerRow = (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem 1.5rem', marginBottom: '1.5rem' }}>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColor, textTransform: 'uppercase' }}>Ref No</div>
+        <div style={{ fontWeight: 600, color: primaryColor }}>{header.refNo}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Booking Date</div>
+        <div>{header.bookingDate ? `${header.bookingDate} ${daysAgo(header.bookingDate)}` : '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Shift</div>
+        <div>{header.shift || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Payment Booking Type</div>
+        <div>{header.paymentBookingType || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Descriptor</div>
+        <div>{header.descriptor || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Gateway</div>
+        <div>{header.gateway || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Vendor</div>
+        <div>{header.vendor || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Created By</div>
+        <div>{header.createdBy || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Source</div>
+        <div>{header.source || '—'}</div>
+      </div>
+    </div>
+  );
+
+  // Three-column row: Airline & PNR | Card | Costing
+  const airlinePnrRow = (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '1.5rem' }}>
+      <div>
+        <AirlineMark airline={airlinePnr.airline2} />
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Airline</div>
+        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{airlinePnr.airline2 || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>PNR</div>
+        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{airlinePnr.primaryPnr || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>A2/A3 PNR</div>
+        <div style={{ fontWeight: 600, color: primaryColor }}>{airlinePnr.a2a3Pnr || '—'}</div>
+      </div>
+    </div>
+  );
+
+  const cardRow = card.cardholderName ? (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Cardholder Name</div>
+      <div style={{ fontWeight: 600 }}>{card.cardholderName}</div>
+      {card.maskedPan && (
+        <><div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Masked PAN</div><div>{card.maskedPan}</div></>
+      )}
+      {card.expiryMonth && card.expiryYear && (
+        <><div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Expiry</div><div>{card.expiryMonth}/{card.expiryYear}</div></>
+      )}
+    </div>
+  ) : null;
+
+  const costingRow = (
+    <>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '1.5rem' }}>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Net</div>
+        <div>{costing.net || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Tax</div>
+        <div>{costing.tax || '—'}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Subtotal</div>
+        <div>{costing.subtotal || '—'}</div>
+      </div>
+    </div>
+    <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
+        <div>
+          <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Total</div>
+          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{costing.total || '—'}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Actual Cost</div>
+          <div>{costing.actualCost || '—'}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase' }}>Actual MCO</div>
+          <div>{costing.actualMCO || '—'}</div>
+        </div>
+      </div>
+    </div>
+    </>
+  );
+
+  // Costing History table
+  const costingHistoryTable = (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Costing History</div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Particular</th>
+            <th style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Cost</th>
+            <th style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Service Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {costingHistory.map((row, idx) => (
+            <tr key={idx}>
+              <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{row.particular || '—'}</td>
+              <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{row.cost || '—'}</td>
+              <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{row.serviceCost || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  // Passenger table
+  const passengerTable = (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Passengers</div>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Type</th>
+            <th style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Name</th>
+            <th style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Gender</th>
+            <th style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>E-Ticket</th>
+            <th style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Seat</th>
+          </tr>
+        </thead>
+        <tbody>
+          {passengers.map((pax, idx) => (
+            <tr key={idx}>
+              <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{pax.type || '—'}</td>
+              <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{pax.name || '—'}</td>
+              {canViewPII ? (
+                <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{pax.gender || '—'}</td>
+              ) : (
+                <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{'—'}</td>
+              )}
+              {canViewPII ? (
+                <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{pax.eTicket || '—'}</td>
+              ) : (
+                <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{'—'}</td>
+              )}
+              <td style={{ padding: '0.5rem', border: '1px solid var(--border-color)', fontSize: '0.75rem' }}>{pax.seat || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  // Billing address line - PII: show only if user can view sensitive data
+  const billingAddressLine = canViewPII && (billingAddress.address || billingAddress.city || billingAddress.zip || billingAddress.state || billingAddress.country) ? (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <div style={{ fontSize: '0.7rem', color: mutedColorVar, textTransform: 'uppercase', marginBottom: '0.5rem' }}>Billing Address</div>
+      <div>
+        {billingAddress.address || '—'}, {billingAddress.city || '—'}, {billingAddress.zip || '—'}, {billingAddress.state || '—'}, {billingAddress.country || '—'}
+      </div>
+    </div>
+  ) : null;
+
+  // Action button bar
+  const actionBar = (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '0.75rem' }}>
+      {availableActions.map((action, idx) => (
+        <button
+          key={idx}
+          style={{
+            backgroundColor: '#e2e8f0',
+            color: 'var(--text-secondary)',
+            width: '100%',
+            textAlign: 'center',
+            padding: '0.5rem',
+            fontWeight: 600,
+            border: 'none',
+            borderRadius: 'var(--radius-md)',
+            cursor: 'default',
+          }}
+        >
+          {action}
+        </button>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {headerRow}
+      {airlinePnrRow}
+      {cardRow}
+      {costingRow}
+      {costingHistoryTable}
+      {passengerTable}
+      {billingAddressLine}
+      {actionBar}
+    </div>
+  );
+};
+
+const daysAgo = (dateValue) => {
+  if (!dateValue) return '';
+  const date = new Date(dateValue);
+  const now = new Date();
+  const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+  return diffDays > 0 ? `(${diffDays}d ago)` : '';
+};
+
+const FlightLegSingle = ({ flight }) => (
+  <div className="flight-row">
+    <div>
+      <div className="flight-code">{flight.departureAirport}</div>
+      <div className="flight-time">{flight.departureTime || '—'}</div>
+      <div className="flight-date">{formatDate(flight.departureDate)}</div>
+      <div className="flight-airport">{airportName(flight.departureAirport)}</div>
+    </div>
+
+    <div className="flight-mid">
+      <Plane size={16} />
+      <span>{flight.duration || '—'}</span>
+    </div>
+
+    <div>
+      <div className="flight-code">{flight.arrivalAirport}</div>
+      <div className="flight-time">{flight.arrivalTime || '—'}</div>
+      <div className="flight-date">{formatDate(flight.arrivalDate)}</div>
+      <div className="flight-airport">{airportName(flight.arrivalAirport)}</div>
+    </div>
+
+    <div className="flight-airline">
+      <AirlineMark airline={flight.airline} />
+      <div className="airline-meta">
+        <div className="airline-name">{flight.airline}</div>
+        <div>{flight.flightNumber || '—'}</div>
+        <div>{flight.cabinClass || 'Economy'}</div>
+        <div>Ticket Status: <b>{flight.ticketStatus || 'Active'}</b></div>
+        {flight.pnr && <div>PNR: {flight.pnr}</div>}
+      </div>
+    </div>
+  </div>
+);
+
+const FlightLeg = ({ flight }) => {
+  if (Array.isArray(flight?.segments) && flight.segments.length > 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {flight.segments.map((seg, idx) => (
+          <div key={idx} style={{ borderBottom: idx < flight.segments.length - 1 ? '1px dashed var(--border-color)' : 'none', paddingBottom: idx < flight.segments.length - 1 ? '1rem' : 0 }}>
+            {flight.segments.length > 1 && (
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                Segment {idx + 1}
+              </div>
+            )}
+            <FlightLegSingle flight={{ ...flight, ...seg }} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <FlightLegSingle flight={flight} />;
+};
+
+const filterBookings = (list, query) => {
+  const { cxId, bookingId, pnr, customerName, cxPhone, customerEmail, agent, altPhone, passengerName, fromDate, toDate, status, service } = query;
+  const match = (field, queryText) => !queryText || (field && String(field).toLowerCase().includes(String(queryText).toLowerCase()));
+
+  return list.filter((booking) => {
+    // CX ID
+    if (!match(booking.cxId, cxId) && !match(booking.customerId, cxId)) return false;
+    // Booking ID
+    if (!match(booking.id, bookingId) && !match(booking.refNo, bookingId)) return false;
+    // PNR — also search _allPnrs which contains every PNR from airlinePnrs rows
+    if (pnr) {
+      const pnrText = String(pnr).toLowerCase();
+      const inPrimary = booking.pnr && String(booking.pnr).toLowerCase().includes(pnrText);
+      const inAll = booking._allPnrs && String(booking._allPnrs).toLowerCase().includes(pnrText);
+      const inPnrs = Array.isArray(booking.airlinePnrs) &&
+        booking.airlinePnrs.some(r => r?.pnr && String(r.pnr).toLowerCase().includes(pnrText));
+      if (!inPrimary && !inAll && !inPnrs) return false;
+    }
+    // Customer name (check both name and first passenger name)
+    if (!match(booking.name, customerName) && !match(booking.passengerName, customerName)) return false;
+    // Phone
+    if (!match(booking.phone, cxPhone)) return false;
+    // Email
+    if (!match(booking.email, customerEmail)) return false;
+    // Alt phone
+    if (!match(booking.altPhone, altPhone)) return false;
+    // Passenger name — check all passengers, not just primary
+    if (passengerName) {
+      const paxText = String(passengerName).toLowerCase();
+      const inPassengerName = booking.passengerName && String(booking.passengerName).toLowerCase().includes(paxText);
+      const inName = booking.name && String(booking.name).toLowerCase().includes(paxText);
+      if (!inPassengerName && !inName) return false;
+    }
+    // Agent — case-insensitive, 'All Agents' matches everything
+    if (agent && agent !== 'All Agents') {
+      const agentText = String(agent).toLowerCase();
+      const matchAgent = booking.agent && String(booking.agent).toLowerCase().includes(agentText);
+      const matchSaleBy = booking.saleBy && String(booking.saleBy).toLowerCase().includes(agentText);
+      if (!matchAgent && !matchSaleBy) return false;
+    }
+    // Status — apply legacy normalization before comparing
+    if (status) {
+      const bookingStatus = normalizeStatus(booking.status);
+      if (bookingStatus !== status && booking.status !== status) return false;
+    }
+    // Service — blank / 'All Services' matches everything
+    if (service && service !== 'All Services') {
+      const wanted = String(service).toLowerCase();
+      const bookingService = normalizeService(booking.service).toLowerCase();
+      if (!bookingService.includes(wanted)) return false;
+    }
+    // Date range
+    if (fromDate && booking.date < fromDate) return false;
+    if (toDate && booking.date > toDate) return false;
+
+    return true;
+  });
+};
+
+
+const pageStyles = `
+.found-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem 1.5rem; }
+.found-ref { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
+.found-booking-status { font-size: 1.05rem; font-weight: 700; color: var(--primary-accent); }
+.found-strip { display: flex; flex-wrap: wrap; gap: 0.35rem 1.75rem; font-size: 0.78rem; color: var(--text-secondary); }
+.found-strip b { color: var(--text-primary); font-weight: 600; }
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 0.75rem 1rem; }
+.found-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.5rem; font-size: 0.78rem; color: var(--text-secondary); padding: 0.6rem 0; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+.found-meta b { color: var(--text-primary); font-weight: 600; }
+.meta-icons { display: flex; gap: 0.35rem; margin-left: auto; }
+.meta-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: white; color: var(--text-secondary); cursor: pointer; }
+.meta-icon-btn:hover { color: var(--primary-accent); border-color: var(--primary-accent); }
+.cxid-heading { display: inline-flex; align-items: center; gap: 0.35rem; background: none; border: none; padding: 0; cursor: pointer; font-size: 0.95rem; font-weight: 700; color: #dd6b20; }
+.cxid-heading:hover { text-decoration: underline; }
+.cx-card { display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; align-items: center; font-size: 0.85rem; color: var(--text-secondary); }
+.cx-card b { color: var(--text-primary); font-weight: 600; margin-right: 0.35rem; }
+.rel-toggle { display: inline-flex; align-items: center; gap: 0.4rem; background: none; border: none; padding: 0; cursor: pointer; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-secondary); }
+.rel-toggle:hover { color: var(--primary-accent); }
+.related-row { cursor: pointer; }
+.related-row:hover { background-color: var(--bg-base); }
+.flight-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap: 1rem 1.5rem; align-items: center; }
+.leg-label { display: block; margin-bottom: 0.75rem; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-secondary); }
+.flight-code { font-size: 1.5rem; font-weight: 700; line-height: 1.1; color: var(--text-primary); }
+.flight-time { font-size: 1.05rem; font-weight: 600; color: var(--text-primary); }
+.flight-date { font-size: 0.72rem; color: var(--text-secondary); }
+.flight-airport { font-size: 0.72rem; color: var(--text-secondary); }
+.flight-mid { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; color: var(--text-secondary); font-size: 0.72rem; white-space: nowrap; }
+.flight-airline { display: flex; align-items: flex-start; gap: 0.6rem; justify-self: end; }
+.airline-meta { font-size: 0.72rem; line-height: 1.4; color: var(--text-secondary); }
+.airline-meta .airline-name { font-weight: 700; color: var(--text-primary); }
+@media (max-width: 760px) {
+  .flight-row { grid-template-columns: 1fr; }
+  .flight-airline { justify-self: start; }
+  .flight-mid { flex-direction: row; }
+}
+`;
+
+const baseMockData = {
+  service: DEFAULT_SERVICE,
+  enquiryStatus: 'New', enquiryDate: '2026-07-01', enquiryCompletedDate: '2026-07-02',
+  paymentStatus: 'Pending', workStatus: 'Pending', smsStatus: 'Pending', callStatus: 'Pending',
+  crmAuditStatus: 'Pending', qualityAuditStatus: 'Pending', upcomingFollowUp: '2026-07-25',
+  cbStatus: 'CB RECEIVED', saleDate: '2026-07-03', changeDate: '2026-07-20', chargeDate: '2026-07-03', merchantStatus: 'Pending',
+  merchantName: 'ZSM TRAVEL USA', vendor: 'Standard', vendorCode: 'VND-STD',
+  activityLog: [{ id: 1, type: 'Booking Created', note: 'Initial booking created', user: 'System', timestamp: '2026-07-03 10:00 AM' }]
+};
+
+const initialMockBookings = [
+  { 
+    ...baseMockData,
+    id: 'ZSM-8942-B', refNo: 'A1708826527', cxId: 'CX-1001', pnr: 'G7X9K2', name: 'John Doe', passengerName: 'John Doe', email: 'john@example.com', phone: '555-0100', altPhone: '555-0101', agent: 'Agent A', saleBy: 'Agent A', status: 'Pending', date: '2026-07-18', travelDate: '2026-08-15', amount: '$380.50',
+    tripType: 'Round Trip',
+    outboundFlight: { airline: 'Delta Air Lines', flightNumber: 'DL101', departureAirport: 'JFK', departureDate: '2026-08-15', departureTime: '08:00 AM', arrivalAirport: 'LAX', arrivalDate: '2026-08-15', arrivalTime: '11:30 AM', duration: '5h 30m', cabinClass: 'Economy', stops: 'Non-stop', ticketStatus: 'Active', pnr: 'G7X9K2' },
+    inboundFlight: { airline: 'Delta Air Lines', flightNumber: 'DL202', departureAirport: 'LAX', departureDate: '2026-08-22', departureTime: '02:00 PM', arrivalAirport: 'JFK', arrivalDate: '2026-08-22', arrivalTime: '10:15 PM', duration: '5h 15m', cabinClass: 'Economy', stops: 'Non-stop', ticketStatus: 'Active', pnr: 'G7X9K2' },
+    itineraryChangeRequests: []
+  },
+  { 
+    ...baseMockData,
+    id: 'ZSM-1049-C', refNo: 'A1708826528', cxId: 'CX-1002', pnr: 'A4B2C9', name: 'Jane Smith', passengerName: 'Jane Smith', email: 'jane@example.com', phone: '555-0199', altPhone: '555-0299', agent: 'Agent B', saleBy: 'Agent B', status: 'Booking Confirmed', date: '2026-07-17', travelDate: '2026-09-10', amount: '$425.00',
+    tripType: 'One Way',
+    outboundFlight: { airline: 'British Airways', flightNumber: 'BA117', departureAirport: 'LHR', departureDate: '2026-09-10', departureTime: '09:15 AM', arrivalAirport: 'JFK', arrivalDate: '2026-09-10', arrivalTime: '12:05 PM', duration: '7h 50m', cabinClass: 'Premium Economy', stops: 'Non-stop', ticketStatus: 'Confirmed', pnr: 'A4B2C9' },
+    itineraryChangeRequests: []
+  },
+  { 
+    ...baseMockData,
+    id: 'ZSM-2911-A', refNo: 'A1708826529', cxId: 'CX-1003', pnr: 'L8K1M3', name: 'Mike Ross', passengerName: 'Mike Ross', email: 'mike@example.com', phone: '555-0122', altPhone: '555-0322', agent: 'Agent A', saleBy: 'Agent A', status: 'Cancelled', date: '2026-07-15', travelDate: '2026-07-20', amount: '$0.00',
+    tripType: 'Round Trip',
+    outboundFlight: { airline: 'Alaska Airlines', flightNumber: 'AS231', departureAirport: 'SFO', departureDate: '2026-07-20', departureTime: '06:30 AM', arrivalAirport: 'SEA', arrivalDate: '2026-07-20', arrivalTime: '08:45 AM', duration: '2h 15m', cabinClass: 'Economy', stops: 'Non-stop', ticketStatus: 'Cancelled', pnr: 'L8K1M3' },
+    inboundFlight: { airline: 'Alaska Airlines', flightNumber: 'AS442', departureAirport: 'SEA', departureDate: '2026-07-25', departureTime: '04:15 PM', arrivalAirport: 'SFO', arrivalDate: '2026-07-25', arrivalTime: '06:20 PM', duration: '2h 05m', cabinClass: 'Economy', stops: 'Non-stop', ticketStatus: 'Cancelled', pnr: 'L8K1M3' },
+    itineraryChangeRequests: []
+  },
+  { 
+    ...baseMockData,
+    id: 'ZSM-3321-F', refNo: 'A1708826530', cxId: 'CX-1004', pnr: 'K9P2M4', name: 'Sarah Lee', passengerName: 'Sarah Lee', email: 'sarah@example.com', phone: '555-0455', altPhone: '', agent: 'Agent C', saleBy: 'Agent C', status: 'Completed', date: '2026-06-10', travelDate: '2026-07-05', amount: '$290.00',
+    tripType: 'One Way',
+    outboundFlight: { airline: 'American Airlines', flightNumber: 'AA105', departureAirport: 'ORD', departureDate: '2026-07-05', departureTime: '10:00 AM', arrivalAirport: 'MIA', arrivalDate: '2026-07-05', arrivalTime: '02:00 PM', duration: '3h 00m', cabinClass: 'Economy', stops: 'Non-stop', ticketStatus: 'Flown', pnr: 'K9P2M4' },
+    itineraryChangeRequests: []
+  },
+  { 
+    ...baseMockData,
+    id: 'ZSM-4455-H', refNo: 'A1708826531', cxId: 'CX-1005', pnr: 'J1T8L9', name: 'Robert King', passengerName: 'Robert King', email: 'robert@example.com', phone: '555-0677', altPhone: '', agent: 'Agent B', saleBy: 'Agent B', status: 'On Hold', date: '2026-07-20', travelDate: '2026-10-12', amount: '$540.00',
+    tripType: 'Round Trip',
+    outboundFlight: { airline: 'American Airlines', flightNumber: 'AA212', departureAirport: 'MIA', departureDate: '2026-10-12', departureTime: '07:00 AM', arrivalAirport: 'JFK', arrivalDate: '2026-10-12', arrivalTime: '10:00 AM', duration: '3h 00m', cabinClass: 'Economy', stops: 'Non-stop', ticketStatus: 'On Hold', pnr: 'J1T8L9' },
+    inboundFlight: { airline: 'American Airlines', flightNumber: 'AA505', departureAirport: 'JFK', departureDate: '2026-10-19', departureTime: '01:30 PM', arrivalAirport: 'MIA', arrivalDate: '2026-10-19', arrivalTime: '04:30 PM', duration: '3h 00m', cabinClass: 'Economy', stops: 'Non-stop', ticketStatus: 'On Hold', pnr: 'J1T8L9' },
+    itineraryChangeRequests: []
+  },
+];
+
+const DETAIL_DEFAULTS = {
+  enquiryStatus: 'New',
+  enquiryDate: '',
+  enquiryCompletedDate: '',
+  paymentStatus: 'Pending',
+  workStatus: 'In Progress',
+  smsStatus: 'Pending',
+  callStatus: 'Pending',
+  crmAuditStatus: 'Pending',
+  qualityAuditStatus: 'Pass Settle',
+  merchantStatus: 'DIGIMAT',
+  cbStatus: 'CB RECEIVED',
+  saleDate: '',
+  chargeDate: '',
+  vendor: '',
+  merchantName: '',
+  vendorCode: '',
+  activityLog: [],
+  itineraryChangeRequests: [],
+};
+
+const serviceActions = [
+  { name: 'Change Itinerary', bg: '#3b82f6', color: '#ffffff' }, // Blue
+  { name: 'Cancellation for Refund', bg: '#ef4444', color: '#ffffff' }, // Red
+  { name: 'Cancellation for Credit', bg: '#f97316', color: '#ffffff' }, // Orange
+  { name: 'Name Correction', bg: '#8b5cf6', color: '#ffffff' }, // Purple
+  { name: 'Seat Assign', bg: '#10b981', color: '#ffffff' }, // Emerald
+  { name: 'Seat Upgrade', bg: '#059669', color: '#ffffff' }, // Dark Emerald
+  { name: 'Add Baggage', bg: '#f59e0b', color: '#ffffff' }, // Amber
+  { name: 'Add Seat and Baggage', bg: '#d97706', color: '#ffffff' }, // Dark Amber
+  { name: 'Pet Booking', bg: '#ec4899', color: '#ffffff' }, // Pink
+  { name: 'Minor Alone Booking', bg: '#06b6d4', color: '#ffffff' }, // Cyan
+  { name: 'Checking Service', bg: '#64748b', color: '#ffffff' } // Slate
+];
+
+const SearchService = () => {
+  const [searchParams] = useSearchParams();
+
+  const [bookings, setBookings] = useState(initialMockBookings);
+  const [bookingsLoaded, setBookingsLoaded] = useState(false);
+
+  useEffect(() => {
+    const loadBookings = async () => {
+      const saved = await fetchBookings();
+      if (saved && saved.length > 0) {
+        // Bookings created on /new-booking are mapped onto this page's row
+        // shape so they can be found by Customer ID (CXId) or Booking ID.
+        setBookings(normalizeBookingsForSearch(saved));
+      } else {
+        await saveBookings(initialMockBookings);
+      }
+      setBookingsLoaded(true);
+    };
+    loadBookings();
+  }, []);
+
+  const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
+  const [bookingToConfirm, setBookingToConfirm] = useState(null);
+  const [notification, setNotification] = useState('');
+  
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [detailsStatus, setDetailsStatus] = useState('');
+  const [showRelated, setShowRelated] = useState(true);
+  const [selectedDetail, setSelectedDetail] = useState(null);
+  const { user, permissions } = useAuth();
+  const hasAutoOpened = useRef(false);
+  
+  // Check if current role can view card block
+  const canViewCardBlock = 
+    user.role === ROLES.SUPER_ADMIN || 
+    user.role === ROLES.ADMIN || 
+    user.role === ROLES.OPS_AGENT || 
+    user.role === ROLES.FINANCE;
+  
+  // Older rows may predate some lifecycle fields; default them so the
+  // dropdowns always render a value instead of a blank controlled select.
+  const openDetails = (booking) => {
+    const merchantStatus = normalizeMerchant(booking.merchantStatus || booking.merchantName);
+    const withDefaults = {
+      ...booking,
+      ...DETAIL_DEFAULTS,
+      status: normalizeStatus(booking.status),
+      workStatus: normalizeOption(booking.workStatus, WORK_STATUSES),
+      qualityAuditStatus: normalizeOption(booking.qualityAuditStatus, QUALITY_AUDIT_STATUSES),
+      crmAuditStatus: normalizeOption(booking.crmAuditStatus, CRM_AUDIT_STATUSES, { Passed: 'Pass', Failed: 'Fail' }),
+      cbStatus: normalizeOption(booking.cbStatus, CB_STATUSES),
+      paymentStatus: normalizeOption(booking.paymentStatus, PAYMENT_STATUSES, LEGACY_PAYMENT_MAP),
+      merchantStatus,
+      merchantName: merchantStatus,
+    };
+    setSelectedBooking(withDefaults);
+    setDetailsStatus(withDefaults.status);
+
+    const detailData = mapBookingDetail(booking);
+    setSelectedDetail(detailData);
+
+    setShowRelated(true);
+  };
+
+  const initialFilters = {
+    cxId: searchParams.get('cxId') || '', 
+    bookingId: searchParams.get('bookingId') || '', 
+    pnr: '', 
+    customerName: searchParams.get('customerName') || '', 
+    cxPhone: '', 
+    customerEmail: '',
+    agent: '', altPhone: '', passengerName: '', fromDate: '', toDate: '', status: '',
+    service: searchParams.get('service') || '',
+  };
+
+  const [filters, setFilters] = useState(initialFilters);
+  const [activeFilters, setActiveFilters] = useState(initialFilters);
+  const [isSearching, setIsSearching] = useState(false);
+  const [activeAction, setActiveAction] = useState(null);
+  
+  // Change Itinerary State
+  const [changeItineraryStep, setChangeItineraryStep] = useState(1);
+  const [selectedLegToChange, setSelectedLegToChange] = useState('');
+  const [changeRequestNote, setChangeRequestNote] = useState('');
+  const [preferredNewDate, setPreferredNewDate] = useState('');
+
+  const resetChangeItineraryState = () => {
+    setChangeItineraryStep(1);
+    setSelectedLegToChange('');
+    setChangeRequestNote('');
+    setPreferredNewDate('');
+    setActiveAction(null);
+  };
+
+  // Runs a search against an explicit filter set. A Customer Id / Booking Id
+  // search that lands on a single record opens the found page directly, unless
+  // autoOpen is disabled (the "All Bookings Of CXID" link wants the table).
+  const applySearch = (nextFilters, { autoOpen = true } = {}) => {
+    setIsSearching(true);
+    setTimeout(() => {
+      setActiveFilters(nextFilters);
+      setIsSearching(false);
+      if (!autoOpen) return;
+      const matches = filterBookings(bookings, nextFilters);
+      if (matches.length === 1 && (nextFilters.cxId || nextFilters.bookingId || nextFilters.cxPhone)) {
+        openDetails(matches[0]);
+      }
+    }, 500);
+  };
+
+  const handleSearch = (e) => {
+    e?.preventDefault();
+    applySearch(filters);
+  };
+
+  // Deep link from the Dashboard (/search?cxId=... or ?bookingId=...) opens the
+  // found page once, after the booking list has loaded.
+  useEffect(() => {
+    if (!bookingsLoaded || hasAutoOpened.current || selectedBooking) return;
+    hasAutoOpened.current = true;
+    const query = activeFilters.cxId || activeFilters.bookingId;
+    if (!query) return;
+    const matches = filterBookings(bookings, activeFilters);
+    if (matches.length === 1) {
+      openDetails(matches[0]);
+    }
+  }, [bookingsLoaded, bookings, activeFilters, selectedBooking]);
+
+  const handleClear = () => {
+    setFilters(initialFilters);
+    setActiveFilters(initialFilters);
+    setSelectedBooking(null);
+  };
+
+  const copyReference = async () => {
+    const booking = selectedBooking;
+    const text = [
+      `Ref No: ${booking.refNo}`,
+      `Booking ID: ${booking.id}`,
+      `CX ID: ${booking.cxId}`,
+      `PNR: ${booking.pnr}`,
+      `Sale Date: ${booking.saleDate || booking.date || '—'}`,
+      `Charge Date: ${booking.chargeDate || '—'}`,
+      `Vendor: ${booking.vendorCode || booking.vendor || '—'}`,
+    ].join(' | ');
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotification('Booking reference copied to clipboard.');
+    } catch {
+      setNotification('Unable to copy booking reference.');
+    }
+    setTimeout(() => setNotification(''), 3000);
+  };
+
+  const handleConfirmClick = (booking) => {
+    setBookingToConfirm(booking);
+    setIsConfirmModalOpen(true);
+  };
+
+  const confirmBooking = async () => {
+    if (!bookingToConfirm) return;
+    
+    const confirmed = { ...bookingToConfirm, status: 'Charged' };
+    const updatedBookings = bookings.map(b => 
+      b.id === bookingToConfirm.id ? confirmed : b
+    );
+    
+    setBookings(updatedBookings);
+    await saveBooking(confirmed);
+    
+    setIsConfirmModalOpen(false);
+    setBookingToConfirm(null);
+    setNotification('Booking confirmed successfully.');
+    
+    setTimeout(() => setNotification(''), 3000);
+  };
+
+  const updateBookingStatus = async () => {
+    if (!selectedBooking) return;
+    
+    const updatedSelected = { ...selectedBooking, status: detailsStatus };
+    const newActivity = {
+      id: Math.floor(Math.random() * 100000),
+      type: 'Lifecycle Update',
+      note: 'Booking statuses and lifecycle properties updated.',
+      user: 'Current User',
+      timestamp: new Date().toLocaleString()
+    };
+    
+    updatedSelected.activityLog = [...(updatedSelected.activityLog || []), newActivity];
+    
+    const updatedBookings = bookings.map(b => 
+      b.id === selectedBooking.id ? updatedSelected : b
+    );
+    
+    setBookings(updatedBookings);
+    await saveBooking(updatedSelected);
+    setSelectedBooking(updatedSelected);
+    
+    setNotification('Booking lifecycle updated successfully.');
+    setTimeout(() => setNotification(''), 3000);
+  };
+
+  const submitChangeItinerary = async () => {
+    if (!selectedLegToChange) return;
+    
+    const newRequest = {
+      id: `REQ-${Math.floor(Math.random() * 10000)}`,
+      type: selectedLegToChange,
+      note: changeRequestNote,
+      preferredDate: preferredNewDate,
+      status: 'Pending',
+      createdAt: new Date().toLocaleString(),
+      agent: 'Current User'
+    };
+    
+    const updatedBookings = bookings.map(b => {
+      if (b.id === selectedBooking.id) {
+        const currentRequests = b.itineraryChangeRequests || [];
+        const currentLog = b.activityLog || [];
+        
+        const activityEvent = {
+          id: Math.floor(Math.random() * 100000),
+          type: 'Itinerary Changed',
+          note: `Requested change for ${selectedLegToChange}. Notes: ${changeRequestNote}`,
+          user: 'Current User',
+          timestamp: new Date().toLocaleString()
+        };
+
+        return { 
+          ...b, 
+          itineraryChangeRequests: [...currentRequests, newRequest],
+          activityLog: [...currentLog, activityEvent]
+        };
+      }
+      return b;
+    });
+    
+    setBookings(updatedBookings);
+    const updatedSelected = updatedBookings.find(b => b.id === selectedBooking.id);
+    await saveBooking(updatedSelected);
+    setSelectedBooking(updatedSelected);
+    
+    resetChangeItineraryState();
+    setNotification('Change Itinerary request submitted successfully.');
+    setTimeout(() => setNotification(''), 3000);
+  };
+
+  const filteredBookings = filterBookings(bookings, activeFilters);
+  const relatedBookings = selectedBooking
+    ? bookings.filter((booking) => booking.cxId && booking.cxId === selectedBooking.cxId)
+    : [];
+
+  return (
+    <div className="page-container">
+      <style>{pageStyles}</style>
+      <h1 className="page-title">Search & Service</h1>
+      <p className="page-subtitle">Locate bookings and perform post-booking actions</p>
+
+      {/* Advanced Search Panel */}
+      <div className="card mb-6" style={{ padding: '1.5rem 2rem' }}>
+        <form onSubmit={handleSearch}>
+          {/* Row 1: 6 columns */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>CXId</label>
+              <input type="text" className="form-input" placeholder="CXId" value={filters.cxId} onChange={(e) => setFilters({...filters, cxId: e.target.value})} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>BookingId</label>
+              <input type="text" className="form-input" placeholder="BookingId" value={filters.bookingId} onChange={(e) => setFilters({...filters, bookingId: e.target.value})} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>PNR</label>
+              <input type="text" className="form-input" placeholder="PNR" value={filters.pnr} onChange={(e) => setFilters({...filters, pnr: e.target.value})} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>Customer Name</label>
+              <input type="text" className="form-input" placeholder="Customer Name" value={filters.customerName} onChange={(e) => setFilters({...filters, customerName: e.target.value})} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>CX Phone</label>
+              <input type="text" className="form-input" placeholder="CX Phone" value={filters.cxPhone} onChange={(e) => setFilters({...filters, cxPhone: e.target.value})} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>Customer Email</label>
+              <input type="text" className="form-input" placeholder="Customer Email" value={filters.customerEmail} onChange={(e) => setFilters({...filters, customerEmail: e.target.value})} />
+            </div>
+          </div>
+
+          {/* Row 2: 5 columns */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'end' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>Select Agent</label>
+              <input list="agent-options" className="form-input" placeholder="Search Agent..." value={filters.agent} onChange={(e) => setFilters({...filters, agent: e.target.value})} />
+              <datalist id="agent-options">
+                <option value="All Agents" />
+                <option value="Agent A" />
+                <option value="Agent B" />
+                <option value="Agent C" />
+              </datalist>
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>Booking Status</label>
+              <select className="form-input" value={filters.status} onChange={(e) => setFilters({...filters, status: e.target.value})}>
+                <option value="">All Statuses</option>
+                {BOOKING_STATUSES.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>Service</label>
+              <select className="form-input" value={filters.service} onChange={(e) => setFilters({...filters, service: e.target.value})}>
+                <option value="">All Services</option>
+                {SERVICE_TYPES.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>Customer Alternate Number</label>
+              <input type="text" className="form-input" placeholder="Customer Alternate Number" value={filters.altPhone} onChange={(e) => setFilters({...filters, altPhone: e.target.value})} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>Passenger Name</label>
+              <input type="text" className="form-input" placeholder="Passenger name" value={filters.passengerName} onChange={(e) => setFilters({...filters, passengerName: e.target.value})} />
+            </div>
+            <div style={{ marginBottom: 0 }}>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', fontWeight: 600 }}>SEARCH</button>
+            </div>
+          </div>
+
+          {/* Row 3: Date Range */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.5rem', alignItems: 'end', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>From Date</label>
+              <input type="date" className="form-input" value={filters.fromDate} onChange={(e) => setFilters({...filters, fromDate: e.target.value})} />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>To Date</label>
+              <input type="date" className="form-input" value={filters.toDate} onChange={(e) => setFilters({...filters, toDate: e.target.value})} />
+            </div>
+            <div style={{ marginBottom: 0 }}>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', fontWeight: 600 }}>SEARCH</button>
+            </div>
+            <div style={{ marginBottom: 0 }}>
+              <button type="button" onClick={handleClear} className="btn btn-secondary" style={{ width: '100%', padding: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Clear Filters</button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {!selectedBooking ? (
+        /* Results Table */
+        <div className="card">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="card-title">Recent Bookings</h2>
+            <span className="text-secondary text-sm">Showing {filteredBookings.length} result(s)</span>
+          </div>
+          
+          {isSearching ? (
+             <div style={{ padding: '4rem', textAlign: 'center', color: mutedColorVar }}>
+               <Loader2 size={48} className="spin" style={{ margin: '0 auto 1rem', animation: 'spin 1s linear infinite', color: 'var(--primary-accent)' }} />
+               <p style={{ fontSize: '1.125rem' }}>Searching bookings...</p>
+             </div>
+          ) : filteredBookings.length === 0 ? (
+             <div style={{ padding: '4rem', textAlign: 'center', color: mutedColorVar }}>
+               <ShieldAlert size={48} style={{ margin: '0 auto 1rem', opacity: 0.2 }} />
+               <p style={{ fontSize: '1.125rem', fontWeight: 600, color: 'var(--text-primary)' }}>No bookings found</p>
+               <p className="mb-4">Try adjusting your search filters to find what you're looking for.</p>
+               <button onClick={handleClear} className="btn btn-secondary">Clear All Filters</button>
+             </div>
+          ) : (
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Booking ID</th>
+                  <th>Customer</th>
+                  <th>Contact</th>
+                  <th>Date</th>
+                  <th>Status</th>
+                  <th>Amount</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredBookings.map((booking) => (
+                  <tr key={booking.id}>
+                    <td style={{ fontWeight: 600, color: 'var(--primary-accent)' }}>
+                      {booking.id}
+                      <div className="text-secondary" style={{ fontSize: '0.75rem', fontWeight: 400 }}>{normalizeService(booking.service)}</div>
+                    </td>
+                    <td>
+                      <div>{booking.name}</div>
+                      <div className="text-secondary" style={{ fontSize: '0.75rem' }}>CX: {booking.cxId}</div>
+                    </td>
+                    <td>
+                      <div className="text-secondary" style={{ fontSize: '0.875rem' }}>{booking.email}</div>
+                      <div className="text-secondary" style={{ fontSize: '0.875rem' }}>{booking.phone}</div>
+                    </td>
+                    <td>
+                      <div>{booking.date}</div>
+                      <div className="text-secondary" style={{ fontSize: '0.75rem' }}>Agent: {booking.agent}</div>
+                    </td>
+                    <td>
+                      <span className={badgeClass(booking.status)}>
+                        {booking.status}
+                      </span>
+                    </td>
+                    <td>
+                      <div>{booking.amount}</div>
+                      <div className="text-secondary" style={{ fontSize: '0.75rem' }}>PNR: {booking.pnr}</div>
+                    </td>
+                    <td>
+                      <div className="flex gap-2" style={{ alignItems: 'center' }}>
+                        <button 
+                          className="btn btn-secondary" 
+                          style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}
+                          onClick={() => openDetails(booking)}
+                        >
+                          View Details
+                        </button>
+                        {booking.status === 'Pending' ? (
+                          <button 
+                            className="btn btn-primary" 
+                            style={{ padding: '0.25rem 0.75rem', fontSize: '0.75rem', backgroundColor: 'var(--primary-accent)', color: 'white', border: 'none' }}
+                            onClick={() => handleConfirmClick(booking)}
+                          >
+                            Confirm Booking
+                          </button>
+                        ) : (booking.status === 'Booking Confirmed' || booking.status === 'Charged') ? (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 600, display: 'flex', alignItems: 'center' }}>
+                            {booking.status} ✓
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          )}
+        </div>
+      ) : (
+        /* Booking Details View */
+        <div className="animate-fade-in">
+          <button 
+            className="btn btn-secondary mb-4" 
+            onClick={() => setSelectedBooking(null)}
+          >
+            ← Back to Results
+          </button>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            {/* Main Content */}
+            <div className="flex-col gap-4" style={{ display: 'flex' }}>
+              {/* Header Info */}
+              <div className="found-header">
+                <div className="found-ref">Ref No: {selectedBooking.refNo}</div>
+                <div className="found-booking-status">Booking Status: {selectedBooking.status}</div>
+              </div>
+
+              {/* Enquiry strip */}
+              <div className="found-strip">
+                <span>Service: <b>{normalizeService(selectedBooking.service)}</b></span>
+                <span>Enquiry status: <b>{selectedBooking.enquiryStatus || 'New'}</b></span>
+                <span>Enquiry Referred date: <b>{selectedBooking.enquiryDate || '—'}</b></span>
+                <span>Enquiry completed date: <b>{selectedBooking.enquiryCompletedDate || '—'}</b></span>
+              </div>
+
+              {/* Status dropdowns */}
+              <div className="card" style={{ padding: '1.25rem 1.5rem' }}>
+                <div className="status-grid">
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Booking Status</label>
+                <select className="form-input" value={detailsStatus} onChange={(e) => setDetailsStatus(e.target.value)}>
+                  {BOOKING_STATUSES.map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Payment Status</label>
+                    <select className="form-input" value={selectedBooking.paymentStatus} onChange={(e) => setSelectedBooking({...selectedBooking, paymentStatus: e.target.value})}>
+                      {PAYMENT_STATUSES.map((status) => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Work Status</label>
+                        <select className="form-input" value={selectedBooking.workStatus} onChange={(e) => setSelectedBooking({...selectedBooking, workStatus: e.target.value})}>
+                          {WORK_STATUSES.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>SMS Status</label>
+                    <select className="form-input" value={selectedBooking.smsStatus} onChange={(e) => setSelectedBooking({...selectedBooking, smsStatus: e.target.value})}>
+                      <option value="Pending">Pending</option>
+                      <option value="Sent">Sent</option>
+                      <option value="Failed">Failed</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Call Status</label>
+                    <select className="form-input" value={selectedBooking.callStatus} onChange={(e) => setSelectedBooking({...selectedBooking, callStatus: e.target.value})}>
+                      <option value="Pending">Pending</option>
+                      <option value="Contacted">Contacted</option>
+                      <option value="No Answer">No Answer</option>
+                      <option value="Completed">Completed</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>CRM Audit Status</label>
+                        <select className="form-input" value={selectedBooking.crmAuditStatus} onChange={(e) => setSelectedBooking({...selectedBooking, crmAuditStatus: e.target.value})}>
+                          {CRM_AUDIT_STATUSES.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Merchant</label>
+                        <select className="form-input" value={selectedBooking.merchantStatus} onChange={(e) => setSelectedBooking({...selectedBooking, merchantStatus: e.target.value, merchantName: e.target.value})}>
+                          {MERCHANTS.map((merchant) => (
+                            <option key={merchant} value={merchant}>{merchant}</option>
+                          ))}
+                        </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>Quality Audit Status</label>
+                        <select className="form-input" value={selectedBooking.qualityAuditStatus} onChange={(e) => setSelectedBooking({...selectedBooking, qualityAuditStatus: e.target.value})}>
+                          {QUALITY_AUDIT_STATUSES.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: '0.7rem', textTransform: 'uppercase' }}>CB Status</label>
+                        <select className="form-input" value={selectedBooking.cbStatus} onChange={(e) => setSelectedBooking({...selectedBooking, cbStatus: e.target.value})}>
+                          {CB_STATUSES.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                  </div>
+                </div>
+                <div className="flex justify-end" style={{ marginTop: '1.25rem' }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => updateBookingStatus(selectedBooking)}
+                    style={{ padding: '0.75rem 2rem', fontWeight: 600 }}
+                  >
+                    Save Lifecycle Changes
+                  </button>
+                </div>
+              </div>
+
+              {/* Sale / charge meta line */}
+              <div className="found-meta">
+                <span>Date Of: <b>{selectedBooking.saleBy || selectedBooking.agent}</b></span>
+                <span>Sale Date: <b>{selectedBooking.saleDate || selectedBooking.date || '—'}</b></span>
+                <span>Charge Date: <b>{selectedBooking.chargeDate || '—'}</b></span>
+                <span>Vendor: <b>{selectedBooking.vendorCode || selectedBooking.vendor || '—'}</b></span>
+                <span>Merchant: <b>{selectedBooking.merchantName || '—'}</b></span>
+                <span className="meta-icons">
+                  <button type="button" className="meta-icon-btn" title="Copy booking reference" onClick={copyReference}>
+                    <Copy size={14} />
+                  </button>
+                  <button type="button" className="meta-icon-btn" title="Print" onClick={() => window.print()}>
+                    <Printer size={14} />
+                  </button>
+                </span>
+              </div>
+
+{/* Booking Detail card - collapsible, rendered from mapped detail data */}
+              {canViewCardBlock ? (
+                <div className="card" style={{ padding: '1.5rem' }}>
+                  <h3 style={{ margin: '0 0 1.25rem 0', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>Booking Detail</h3>
+
+                  {/* Show skeleton while loading, or data when available */}
+                  {selectedDetail ? renderBookingDetailCard(selectedDetail, canViewCardBlock) : (
+                    <div style={{ height: '8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                      <Loader2 size={24} className="spin" style={{ marginRight: '0.5rem' }} /> Loading detail data...
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {/* All bookings for this customer */}
+                <button
+                type="button"
+                className="cxid-heading"
+                onClick={() => {
+                  const nextFilters = { ...initialFilters, cxId: selectedBooking.cxId };
+                  setFilters(nextFilters);
+                  setSelectedBooking(null);
+                  applySearch(nextFilters, { autoOpen: false });
+                }}
+              >
+                All Bookings Of CXID: {selectedBooking.cxId}
+              </button>
+
+              {/* Customer card + related bookings */}
+              <div className="card">
+                <div className="cx-card">
+                  <span><b>CX ID:</b>{selectedBooking.cxId || '—'}</span>
+                  <span><b>Name:</b>{selectedBooking.name || '—'}</span>
+                  <span><b>Email:</b>{selectedBooking.email || '—'}</span>
+                  <span><b>Phone:</b>{selectedBooking.phone || '—'}</span>
+                  <span><b>Alt Phone:</b>{selectedBooking.altPhone || 'N/A'}</span>
+                </div>
+
+                <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+                  <button type="button" className="rel-toggle" onClick={() => setShowRelated((value) => !value)}>
+                    {showRelated ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    All Related Booking Detail
+                  </button>
+
+                  {showRelated && (
+                    relatedBookings.length > 0 ? (
+                      <div className="table-container" style={{ marginTop: '0.75rem' }}>
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>BID</th>
+                              <th>PNR</th>
+                              <th>Booking Type</th>
+                              <th>Created At</th>
+                              <th>Agent</th>
+                              <th>MCO</th>
+                              <th>Transaction Status</th>
+                              <th>Warning Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {relatedBookings.map((booking) => (
+                              <tr key={booking.id} className="related-row" onClick={() => openDetails(booking)}>
+                                <td style={{ fontWeight: 600, color: 'var(--primary-accent)' }}>{booking.id}</td>
+                                <td>{booking.pnr || '—'}</td>
+                                <td>{booking.tripType || '—'}</td>
+                                <td>{booking.date || '—'}</td>
+                                <td>{booking.agent || '—'}</td>
+                                <td>{mcoFor(booking)}</td>
+                                <td><span className={badgeClass(booking.status)}>{booking.status}</span></td>
+                                <td>{warningFor(booking)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p style={{ marginTop: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        No other bookings found for this customer.
+                      </p>
+                    )
+                  )}
+                </div>
+              </div>
+              {/* Current Itinerary */}
+              <div className="card">
+                <h2 className="card-title mb-4">Current Itinerary</h2>
+
+                {/* Outbound */}
+                {selectedBooking.outboundFlight && (
+                  <div className="mb-6">
+                    <h3 className="leg-label">Outbound Flight</h3>
+                    <FlightLeg flight={selectedBooking.outboundFlight} />
+                  </div>
+                )}
+
+                {/* Inbound */}
+                {selectedBooking.inboundFlight && (
+                  <div>
+                    <h3 className="leg-label">Inbound Flight</h3>
+                    <FlightLeg flight={selectedBooking.inboundFlight} />
+                  </div>
+                )}
+
+                {!selectedBooking.outboundFlight && !selectedBooking.inboundFlight && (
+                  <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>No itinerary has been recorded for this booking.</p>
+                )}
+              </div>
+              
+              {/* Booking History / Activity Log */}
+              {selectedBooking.activityLog && selectedBooking.activityLog.length > 0 && (
+                <div className="card mt-4">
+                  <h2 className="card-title mb-4">Booking Activity History</h2>
+                  <div className="flex-col gap-4" style={{ display: 'flex' }}>
+                    {selectedBooking.activityLog.map(log => (
+                      <div key={log.id} style={{ padding: '1rem', borderLeft: '4px solid var(--primary-accent)', backgroundColor: 'var(--bg-base)', borderRadius: '0 var(--radius-sm) var(--radius-sm) 0' }}>
+                        <div className="flex justify-between items-center mb-1">
+                          <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{log.type}</span>
+                          <span className="text-secondary text-sm">{log.timestamp}</span>
+                        </div>
+                        <div className="text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
+                          <User size={14} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'text-bottom' }}/> 
+                          {log.user}
+                        </div>
+                        <div style={{ backgroundColor: 'white', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                          {log.note}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Section: Actions */}
+            <div className="card" style={{ backgroundColor: 'var(--bg-elevated)', marginTop: '1rem' }}>
+              <h2 className="card-title mb-4 flex items-center gap-2">
+                <ShieldAlert size={18} className="text-warning" />
+                Service Actions
+              </h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+                {serviceActions.map((action, idx) => (
+                  <button 
+                    key={idx} 
+                    style={{ 
+                      backgroundColor: action.bg, 
+                      color: action.color, 
+                      width: '100%', 
+                      textAlign: 'center', 
+                      padding: '0.75rem', 
+                      fontWeight: 600,
+                      border: 'none',
+                      borderRadius: 'var(--radius-md)',
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                      transition: 'transform 0.2s, filter 0.2s'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.filter = 'brightness(1.1)'}
+                    onMouseOut={(e) => e.currentTarget.style.filter = 'brightness(1)'}
+                    onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.98)'}
+                    onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                    onClick={() => setActiveAction(action.name)}
+                  >
+                    {action.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Dynamic Action Modals */}
+      {activeAction === 'Change Itinerary' && selectedBooking && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div className="card animate-fade-in" style={{ width: '100%', maxWidth: '650px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <h2 className="card-title mb-4">Change Itinerary Request</h2>
+            
+            {changeItineraryStep === 1 ? (
+              <>
+                <div style={{ backgroundColor: 'var(--bg-base)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem' }}>
+                  <h3 className="text-sm text-secondary" style={{ textTransform: 'uppercase', fontWeight: 600, marginBottom: '0.5rem' }}>Current Itinerary</h3>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: selectedBooking.tripType === 'Round Trip' ? '1fr 1fr' : '1fr', gap: '1rem' }}>
+                    {/* Outbound */}
+                    <div style={{ padding: '1rem', backgroundColor: 'white', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                      <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Outbound: {selectedBooking.outboundFlight.departureAirport} → {selectedBooking.outboundFlight.arrivalAirport}</div>
+                      <div className="text-secondary text-sm">{selectedBooking.outboundFlight.airline} {selectedBooking.outboundFlight.flightNumber}</div>
+                      <div className="text-secondary text-sm">{selectedBooking.outboundFlight.departureDate}</div>
+                    </div>
+                    
+                    {/* Inbound */}
+                    {selectedBooking.inboundFlight && (
+                      <div style={{ padding: '1rem', backgroundColor: 'white', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                        <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Inbound: {selectedBooking.inboundFlight.departureAirport} → {selectedBooking.inboundFlight.arrivalAirport}</div>
+                        <div className="text-secondary text-sm">{selectedBooking.inboundFlight.airline} {selectedBooking.inboundFlight.flightNumber}</div>
+                        <div className="text-secondary text-sm">{selectedBooking.inboundFlight.departureDate}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="form-group mb-6">
+                  <label className="form-label" style={{ fontWeight: 600 }}>Which itinerary do you want to change? <span className="text-danger">*</span></label>
+                  <div className="flex-col gap-2" style={{ display: 'flex', marginTop: '0.5rem' }}>
+                    <label className="flex items-center gap-2" style={{ cursor: 'pointer' }}>
+                      <input type="radio" name="leg" value="Outbound Flight" checked={selectedLegToChange === 'Outbound Flight'} onChange={(e) => setSelectedLegToChange(e.target.value)} />
+                      Outbound Flight
+                    </label>
+                    {selectedBooking.tripType === 'Round Trip' && (
+                      <>
+                        <label className="flex items-center gap-2" style={{ cursor: 'pointer' }}>
+                          <input type="radio" name="leg" value="Inbound Flight" checked={selectedLegToChange === 'Inbound Flight'} onChange={(e) => setSelectedLegToChange(e.target.value)} />
+                          Inbound Flight
+                        </label>
+                        <label className="flex items-center gap-2" style={{ cursor: 'pointer' }}>
+                          <input type="radio" name="leg" value="Both Outbound and Inbound Flights" checked={selectedLegToChange === 'Both Outbound and Inbound Flights'} onChange={(e) => setSelectedLegToChange(e.target.value)} />
+                          Both Outbound and Inbound Flights
+                        </label>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: 600 }}>What would you like to change? <span className="text-danger">*</span></label>
+                  <textarea 
+                    className="form-input" 
+                    rows="4" 
+                    placeholder="Please describe the changes you would like to make to your itinerary (e.g., Change travel date, departure time, flight, destination, etc.)..."
+                    value={changeRequestNote}
+                    onChange={(e) => setChangeRequestNote(e.target.value)}
+                  ></textarea>
+                </div>
+                
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: 600 }}>Preferred New Date (Optional)</label>
+                  <input type="date" className="form-input" value={preferredNewDate} onChange={(e) => setPreferredNewDate(e.target.value)} />
+                </div>
+
+                <div className="flex justify-between mt-6 pt-4" style={{ borderTop: '1px solid var(--border-color)' }}>
+                  <button className="btn btn-secondary" onClick={resetChangeItineraryState}>Cancel</button>
+                  <button 
+                    className="btn btn-primary" 
+                    disabled={!selectedLegToChange || !changeRequestNote}
+                    onClick={() => setChangeItineraryStep(2)}
+                    style={{ opacity: (!selectedLegToChange || !changeRequestNote) ? 0.5 : 1 }}
+                  >
+                    Review Changes →
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ backgroundColor: 'var(--bg-base)', padding: '1.5rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem' }}>
+                  <h3 style={{ fontWeight: 600, marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>Request Summary</h3>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '0.75rem', fontSize: '0.875rem' }}>
+                    <div className="text-secondary">Booking ID:</div>
+                    <div style={{ fontWeight: 500 }}>{selectedBooking.id}</div>
+                    
+                    <div className="text-secondary">PNR:</div>
+                    <div style={{ fontWeight: 500 }}>{selectedBooking.pnr}</div>
+                    
+                    <div className="text-secondary">Selected Itinerary:</div>
+                    <div style={{ fontWeight: 500, color: 'var(--primary-accent)' }}>{selectedLegToChange}</div>
+                    
+                    <div className="text-secondary">Current Route:</div>
+                    <div>{selectedBooking.outboundFlight.departureAirport} → {selectedBooking.outboundFlight.arrivalAirport} {selectedBooking.inboundFlight && `(Round Trip)`}</div>
+                    
+                    <div className="text-secondary mt-2">Requested Change:</div>
+                    <div className="mt-2" style={{ backgroundColor: 'white', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)' }}>
+                      {changeRequestNote}
+                      {preferredNewDate && <div className="mt-2 text-primary text-sm font-medium">Preferred Date: {preferredNewDate}</div>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-between mt-6 pt-4" style={{ borderTop: '1px solid var(--border-color)' }}>
+                  <button className="btn btn-secondary" onClick={() => setChangeItineraryStep(1)}>← Back to Edit</button>
+                  <button className="btn btn-primary" onClick={submitChangeItinerary}>Submit Change Request</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      
+      {activeAction && activeAction !== 'Change Itinerary' && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div className="card animate-fade-in" style={{ width: '100%', maxWidth: '500px' }}>
+            <h2 className="card-title mb-4">{activeAction}</h2>
+            <p className="text-secondary mb-6">You are initiating the <strong>{activeAction}</strong> workflow for booking <strong>{selectedBooking?.id}</strong>. This action may result in additional charges or refunds to the customer.</p>
+            
+            <div className="form-group">
+              <label className="form-label">Internal Notes / Reason</label>
+              <textarea className="form-input" rows="3" placeholder="Explain why this action is being taken..."></textarea>
+            </div>
+            
+            <div className="flex justify-between mt-6">
+              <button className="btn btn-secondary" onClick={() => setActiveAction(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => setActiveAction(null)}>Proceed</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isConfirmModalOpen && bookingToConfirm && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 110 }}>
+          <div className="card animate-fade-in" style={{ width: '100%', maxWidth: '500px' }}>
+            <h2 className="card-title mb-4">Confirm Booking</h2>
+            <p className="text-secondary mb-6">Are you sure you want to confirm this booking?</p>
+            
+            <div style={{ backgroundColor: 'var(--bg-base)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div>
+                  <div className="text-secondary text-sm">Booking ID</div>
+                  <div style={{ fontWeight: 600 }}>{bookingToConfirm.id}</div>
+                </div>
+                <div>
+                  <div className="text-secondary text-sm">PNR</div>
+                  <div style={{ fontWeight: 600 }}>{bookingToConfirm.pnr}</div>
+                </div>
+                <div>
+                  <div className="text-secondary text-sm">Customer Name</div>
+                  <div>{bookingToConfirm.name}</div>
+                </div>
+                <div>
+                  <div className="text-secondary text-sm">Passenger Name</div>
+                  <div>{bookingToConfirm.passengerName}</div>
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <div className="text-secondary text-sm">Flight/Itinerary</div>
+                  <div>{bookingToConfirm.flight}</div>
+                </div>
+                <div>
+                  <div className="text-secondary text-sm">Travel Date</div>
+                  <div>{bookingToConfirm.travelDate}</div>
+                </div>
+                <div>
+                  <div className="text-secondary text-sm">Total Amount</div>
+                  <div style={{ fontWeight: 600, color: 'var(--success)' }}>{bookingToConfirm.amount}</div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-between">
+              <button className="btn btn-secondary" onClick={() => setIsConfirmModalOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={confirmBooking}>Confirm Booking</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notification && (
+        <div style={{ position: 'fixed', bottom: '2rem', right: '2rem', backgroundColor: 'var(--success)', color: 'white', padding: '1rem 2rem', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 200, display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }} className="animate-fade-in">
+          ✓ {notification}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SearchService;
